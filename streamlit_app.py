@@ -3,8 +3,6 @@ import datetime
 from utils.auth import load_users, check_user
 from utils.planning import init_dataframe, save_user_planning, load_all_plannings, get_weeks_of_month, plages, generate_final_week_planning
 from utils.charts import plot_hours
-import calendar  # pour récupérer les noms des mois
-
 
 st.set_page_config(page_title="Planning Astreintes", layout="wide")
 st.title("📅 Planning des astreintes")
@@ -13,33 +11,32 @@ st.title("📅 Planning des astreintes")
 users = load_users()
 user_code = st.text_input("Entrez votre code personnel :", type="password")
 current_user = check_user(user_code, users)
-mois = [calendar.month_name[i] for i in range(1, 13)]
 
 if current_user:
-    st.success(f"Bonjour {current_user}, vous pouvez remplir vos plages")
-    month_name = st.selectbox("Sélectionner le mois :",mois, index=datetime.datetime.now().month-1)
+    st.success(f"Bonjour {current_user}, vous pouvez remplir vos priorités par plage")
+    
+    # Mois par nom
+    import calendar
+    mois = [calendar.month_name[i] for i in range(1, 13)]
+    month_name = st.selectbox("Sélectionner le mois :", mois, index=datetime.datetime.now().month-1)
     month = mois.index(month_name) + 1
     year = st.number_input("Année :", value=datetime.datetime.now().year, min_value=2020, max_value=2030)
-    weeks = get_weeks_of_month(month, year)
 
+    weeks = get_weeks_of_month(month, year)
     for start, end in weeks:
         st.subheader(f"Semaine du {start.strftime('%d/%m/%Y')} au {end.strftime('%d/%m/%Y')}")
         df = init_dataframe(start)
-        # Options possibles pour chaque plage
-        options = ["", "N1", "N2", "Backup1", "Backup2", "Absent"]
 
-        # Crée le tableau interactif avec dropdowns pour chaque plage
-        edited_df = st.data_editor(
-            df,
-            column_config={
-                plage: st.column_config.SelectboxColumn(
-                    options=options,
-                    label=plage
-                ) for plage in plages
-            },
-            num_rows="dynamic"
-        )
-        
+        # Dropdowns pour chaque priorité
+        column_config = {}
+        for plage in plages:
+            for priority in ["N1","N2","Backup1","Backup2"]:
+                column_config[f"{plage}_{priority}"] = st.column_config.SelectboxColumn(
+                    options=["", current_user], label=f"{plage}_{priority}"
+                )
+
+        edited_df = st.data_editor(df, column_config=column_config, num_rows="dynamic")
+
         if st.button(f"💾 Sauvegarder Planning ({start.strftime('%d/%m/%Y')})"):
             save_user_planning(current_user, edited_df)
             st.success("Planning sauvegardé ✅")
@@ -58,6 +55,8 @@ if not all_df.empty:
         if fig_jour: st.plotly_chart(fig_jour, use_container_width=True)
     with col2:
         if fig_nuit: st.plotly_chart(fig_nuit, use_container_width=True)
+
+    # --- Planning final de la semaine ---
     st.header("📌 Planning final de la semaine")
     today = datetime.date.today()
     start_week = today - datetime.timedelta(days=today.weekday())
