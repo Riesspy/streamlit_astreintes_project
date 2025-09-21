@@ -27,8 +27,13 @@ if current_user:
         # Crée le tableau interactif avec dropdowns pour chaque plage
         edited_df = st.data_editor(
             df,
-            column_config={plage: st.column_config.Selectbox(options=options, label=plage) for plage in df.columns if plage in plages},
-            num_rows="dynamic" )
+            column_config={
+                plage: st.column_config.Selectbox(
+                    options=options, 
+                    label=plage)
+                    for plage in df.columns if plage in plages},
+            num_rows="dynamic"
+        )
         
         if st.button(f"💾 Sauvegarder Planning ({start.strftime('%d/%m/%Y')})"):
             save_user_planning(current_user, edited_df)
