@@ -5,7 +5,7 @@ import pandas as pd
 from utils.auth import load_users, check_user
 from utils.planning import (
     init_dataframe, save_user_planning, load_all_plannings,
-    get_weeks_of_month, plages, generate_final_week_planning
+    get_weeks_of_month, plages, assign_plage
 )
 from utils.charts import plot_hours
 
@@ -16,6 +16,9 @@ st.title("📅 Planning des astreintes")
 users = load_users()
 user_code = st.text_input("Entrez votre code personnel :", type="password")
 current_user = check_user(user_code, users)
+
+# Liste des noms de tous les utilisateurs
+users_list = list(users.values())
 
 if current_user:
     st.success(f"Bonjour {current_user}, vous pouvez remplir vos plages")
@@ -70,11 +73,38 @@ if current_user:
 else:
     st.warning("Veuillez entrer un code valide pour continuer.")
 
+# --- Fonction pour générer planning final complet ---
+def generate_final_week_planning_complete(all_df, start_date, users_list):
+    # Créer un DataFrame complet avec tous les utilisateurs
+    complete_df = pd.DataFrame()
+    for user in users_list:
+        # Filtrer les données existantes pour l'utilisateur
+        user_df = all_df[all_df["Utilisateur"] == user].copy()
+        # Ajouter les jours manquants
+        for i in range(7):
+            day = start_date + datetime.timedelta(days=i)
+            if user_df[user_df["Date"] == day].empty:
+                row = {"Date": day, "Jour": day.strftime("%A"), "Utilisateur": user}
+                for plage in plages:
+                    row[plage] = "Absent"
+                user_df = pd.concat([user_df, pd.DataFrame([row])], ignore_index=True)
+        complete_df = pd.concat([complete_df, user_df], ignore_index=True)
+
+    # Générer le planning final
+    final = pd.DataFrame()
+    final["Date"] = sorted(complete_df["Date"].unique())
+    final["Jour"] = final["Date"].apply(lambda d: pd.to_datetime(d).strftime("%A"))
+    
+    for plage in plages:
+        final[plage] = final["Date"].apply(lambda d: assign_plage(complete_df[complete_df["Date"]==d], plage))
+    
+    return final
+
 # --- Affichage global ---
 st.header("📊 Planning global")
 all_df = load_all_plannings()
 if not all_df.empty:
-    all_df["Date"] = pd.to_datetime(all_df["Date"]).dt.date  # Correction importante
+    all_df["Date"] = pd.to_datetime(all_df["Date"]).dt.date
     st.dataframe(all_df)
 
     # Graphes d'heures
@@ -87,12 +117,9 @@ if not all_df.empty:
     with col2:
         if fig_nuit: st.plotly_chart(fig_nuit, use_container_width=True)
 
-    # Planning final de la semaine
-    st.header("📌 Planning final de la semaine")
-    today = datetime.date.today()
-    start_week = today - datetime.timedelta(days=today.weekday())
-    final_week_df = generate_final_week_planning(all_df, start_week)
-    if not final_week_df.empty:
-        st.dataframe(final_week_df)
-    else:
-        st.info("Le planning final est vide. Assurez-vous que des utilisateurs ont rempli leurs plannings pour cette semaine.")
+# --- Planning final de la semaine (toujours généré) ---
+st.header("📌 Planning final de la semaine")
+today = datetime.date.today()
+start_week = today - datetime.timedelta(days=today.weekday())
+final_week_df = generate_final_week_planning_complete(all_df, start_week, users_list)
+st.dataframe(final_week_df)
