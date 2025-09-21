@@ -21,7 +21,15 @@ if current_user:
     for start, end in weeks:
         st.subheader(f"Semaine du {start.strftime('%d/%m/%Y')} au {end.strftime('%d/%m/%Y')}")
         df = init_dataframe(start)
-        edited_df = st.data_editor(df, num_rows="dynamic")
+        # Options possibles pour chaque plage
+        options = ["", "N1", "N2", "Backup1", "Backup2", "Absent"]
+
+        # Crée le tableau interactif avec dropdowns pour chaque plage
+        edited_df = st.data_editor(
+            df,
+            column_config={plage: st.column_config.Selectbox(options=options, label=plage) for plage in df.columns if plage in plages},
+            num_rows="dynamic" )
+        
         if st.button(f"💾 Sauvegarder Planning ({start.strftime('%d/%m/%Y')})"):
             save_user_planning(current_user, edited_df)
             st.success("Planning sauvegardé ✅")
