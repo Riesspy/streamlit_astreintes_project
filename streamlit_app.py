@@ -5,7 +5,7 @@ import pandas as pd
 from utils.auth import load_users, check_user
 from utils.planning import (
     init_dataframe, save_user_planning, load_all_plannings,
-    get_weeks_of_month, plages, assign_plage
+    get_weeks_of_month, plages
 )
 from utils.charts import plot_hours
 
@@ -73,12 +73,22 @@ if current_user:
 else:
     st.warning("Veuillez entrer un code valide pour continuer.")
 
-# --- Fonction pour générer planning final complet ---
+# --- Fonction pour choisir la personne pour chaque plage selon priorité ---
+def assign_plage(day_df, plage):
+    """
+    Choisit la personne pour la plage selon N1 > N2 > Backup1 > Backup2 > Absent
+    """
+    for priority in ["N1", "N2", "Backup1", "Backup2"]:
+        users_priority = day_df[day_df[plage] == priority]
+        if not users_priority.empty:
+            return users_priority.iloc[0]["Utilisateur"]
+    return "Absent"
+
+# --- Fonction pour générer le planning final complet ---
 def generate_final_week_planning_complete(all_df, start_date, users_list):
     # Créer un DataFrame complet avec tous les utilisateurs
     complete_df = pd.DataFrame()
     for user in users_list:
-        # Filtrer les données existantes pour l'utilisateur
         user_df = all_df[all_df["Utilisateur"] == user].copy()
         # Ajouter les jours manquants
         for i in range(7):
