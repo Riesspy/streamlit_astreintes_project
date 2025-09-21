@@ -5,12 +5,12 @@ def load_users(filepath="data/users.json"):
     if not os.path.exists(filepath):
         # Valeurs par défaut
         return {
-            "JULIE123": "Julie",
-            "LYNDA456": "Lynda",
-            "RIADH789": "Riadh",
-            "ESTELLE000": "Estelle",
-            "FLORIAN321": "Florian",
-            "MATHIAS654": "Mathias"
+            "JULIE": "Julie",
+            "LYNDA": "Lynda",
+            "RIADH": "Riadh",
+            "ESTELLE": "Estelle",
+            "FLORIAN": "Florian",
+            "MATHIAS": "Mathias"
         }
     with open(filepath, "r") as f:
         return json.load(f)
