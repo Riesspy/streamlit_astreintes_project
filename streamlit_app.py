@@ -20,26 +20,27 @@ current_user = check_user(user_code, users)
 # Liste des noms de tous les utilisateurs
 users_list = list(users.values())
 
+# --- Sélection du mois et de l'année ---
+mois = [calendar.month_name[i] for i in range(1, 13)]
+month_name = st.selectbox("Sélectionner le mois :", mois, index=datetime.datetime.now().month-1)
+month = mois.index(month_name) + 1
+year = st.number_input("Année :", value=datetime.datetime.now().year, min_value=2020, max_value=2030)
+
+# --- Calculer les jours du mois --- 🔹 global pour éviter NameError
+first_day = datetime.date(year, month, 1)
+last_day = calendar.monthrange(year, month)[1]
+month_days = [first_day + datetime.timedelta(days=i) for i in range(last_day)]
+
+# --- Charger tous les plannings existants ---
+all_plannings = load_all_plannings()
+if not all_plannings.empty:
+    all_plannings["Date"] = pd.to_datetime(all_plannings["Date"]).dt.date
+
 # --- Tableau interactif utilisateur ---
 if current_user:
     st.success(f"Bonjour {current_user}, vous pouvez remplir vos plages")
 
-    # Sélection du mois et de l'année
-    mois = [calendar.month_name[i] for i in range(1, 13)]
-    month_name = st.selectbox("Sélectionner le mois :", mois, index=datetime.datetime.now().month-1)
-    month = mois.index(month_name) + 1
-    year = st.number_input("Année :", value=datetime.datetime.now().year, min_value=2020, max_value=2030)
-
-    # Charger tous les plannings existants
-    all_plannings = load_all_plannings()
-    if not all_plannings.empty:
-        all_plannings["Date"] = pd.to_datetime(all_plannings["Date"]).dt.date
-
     # Générer tableau interactif pour chaque semaine du mois
-    first_day = datetime.date(year, month, 1)
-    last_day = calendar.monthrange(year, month)[1]
-    month_days = [first_day + datetime.timedelta(days=i) for i in range(last_day)]
-
     for week_start in [first_day + datetime.timedelta(days=i) for i in range(0, last_day, 7)]:
         st.subheader(f"Semaine du {week_start.strftime('%d/%m/%Y')}")
         week_days = [week_start + datetime.timedelta(days=i) for i in range(7) if (week_start + datetime.timedelta(days=i)).month == month]
@@ -127,11 +128,12 @@ def prefill_next_week(all_df, last_week_start, users_list):
 
 # --- Planning final du mois ---
 st.header("📌 Planning final du mois")
-all_df = load_all_plannings()
-if not all_df.empty:
+if not all_plannings.empty:
+    all_df = all_plannings.copy()
     all_df["Date"] = pd.to_datetime(all_df["Date"]).dt.date
     final_month_rows = []
     user_hours = compute_user_hours(all_df)
+
     for day in month_days:
         day_df = all_df[all_df["Date"] == day]
         for plage in plages:
@@ -143,12 +145,14 @@ if not all_df.empty:
                 "Plage": plage,
                 "Utilisateur": selected_user
             })
+
     final_month_df = pd.DataFrame(final_month_rows)
     st.dataframe(final_month_df)
 
     # Graphes
     fig_jour = plot_hours(all_df, ["07h-09h","09h-12h","12h-14h","15h-18h","18h-19h"], "Heures journée (07h-19h)")
     fig_nuit = plot_hours(all_df, ["19h-00h","00h-07h"], "Heures nuit (19h-07h)")
+
     col1, col2 = st.columns(2)
     with col1:
         if fig_jour: st.plotly_chart(fig_jour, use_container_width=True)
