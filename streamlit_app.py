@@ -1,136 +1,53 @@
 import streamlit as st
 import pandas as pd
-import datetime
-import plotly.express as px
-from collections import defaultdict
+from utils.auth import load_users, check_user
+from utils.planning import init_dataframe, save_user_planning, load_all_plannings, plages
+from utils.charts import plot_hours
 
 st.set_page_config(page_title="Planning Astreintes", layout="wide")
 
-# --- Exemple de données ---
-personnes = ["Alice", "Bob", "Claire", "David", "Emma", "Farid"]
+users = load_users()
 
-jours_semaine = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi"]
-jours_nuits = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"]
+st.title("📅 Planning des astreintes")
 
-# Plages horaires
-plages_jour = {
-    "plage1": (7, 9),
-    "plage2": (9, 12),
-    "plage3": (12, 14),
-    "plage4": (15, 18)
-}
+# --- Login ---
+user_code = st.text_input("Entrez votre code personnel :", type="password")
 
-plages_nuit = {
-    "plage5": (19, 7),  # nuit : 19h -> 7h lendemain
-    "vendredi_soir": (19, 24),
-    "samedi": (0, 24),
-    "dimanche_nuit": (0, 7)
-}
+current_user = check_user(user_code, users)
+if current_user:
+    st.success(f"Bonjour {current_user}, vous pouvez remplir vos plages")
 
-# --- Stockage des préférences et absences ---
-st.sidebar.title("Mes Préférences & Absences")
-prefs = {}
-absences = {}
+    df = init_dataframe()
 
-for p in personnes:
-    st.sidebar.subheader(p)
-    prefs[p] = {}
-    absences[p] = {}
-    for jour in jours_semaine:
-        for plage in plages_jour:
-            prefs[p][(jour, plage)] = st.sidebar.selectbox(
-                f"{jour} {plage} - {p}", ["N1", "N2", "BackupN1", "BackupN2", "Aucun"], key=f"{p}_{jour}_{plage}"
-            )
-            absences[p][(jour, plage)] = st.sidebar.checkbox(
-                f"Absent {jour} {plage} - {p}", key=f"abs_{p}_{jour}_{plage}"
-            )
-    for jour in jours_nuits:
-        for plage in plages_nuit:
-            prefs[p][(jour, plage)] = st.sidebar.selectbox(
-                f"{jour} {plage} (nuit/week-end) - {p}", ["N1", "N2", "BackupN1", "BackupN2", "Aucun"], key=f"{p}_{jour}_{plage}_nuit"
-            )
-            absences[p][(jour, plage)] = st.sidebar.checkbox(
-                f"Absent {jour} {plage} - {p}", key=f"abs_{p}_{jour}_{plage}_nuit"
+    # Remplissage du tableau
+    for i, row in df.iterrows():
+        jour = row["Jour"]
+        for plage in plages:
+            df.at[i, plage] = st.selectbox(
+                f"{jour} - {plage}", 
+                ["", "N1", "N2", "Backup1", "Backup2", "Absent"], 
+                key=f"{jour}-{plage}-{current_user}"
             )
 
-# --- Calcul planning ---
-planning = {}
-heures_cumulees = defaultdict(float)
+    if st.button("💾 Sauvegarder mon planning"):
+        save_user_planning(current_user, df)
+        st.success("Planning sauvegardé avec succès ✅")
 
-def duree(plage):
-    h_start, h_end = plage
-    return (h_end - h_start) % 24  # pour gérer les nuits
+else:
+    st.warning("Veuillez entrer un code valide pour continuer.")
 
-# Assignation simple selon règles
-def assigner(jour, plage, candidats):
-    if not candidats:
-        return None
-    # Priorité N1 > N2 > BackupN1 > BackupN2
-    niveaux = ["N1", "N2", "BackupN1", "BackupN2"]
-    for niveau in niveaux:
-        candidats_niveau = [p for p in candidats if prefs[p].get((jour, plage), "Aucun") == niveau]
-        if candidats_niveau:
-            # Choisir la personne avec moins d'heures cumulées
-            p_min = min(candidats_niveau, key=lambda x: heures_cumulees[x])
-            heures_cumulees[p_min] += duree(plages_jour.get(plage, plages_nuit.get(plage)))
-            return p_min
-    # Si aucun, choisir au hasard parmi candidats restants
-    p_min = min(candidats, key=lambda x: heures_cumulees[x])
-    heures_cumulees[p_min] += duree(plages_jour.get(plage, plages_nuit.get(plage)))
-    return p_min
+# --- Vue globale ---
+st.header("📊 Planning global")
+all_df = load_all_plannings()
+if not all_df.empty:
+    st.dataframe(all_df)
 
-# Planning semaine
-for jour in jours_semaine:
-    planning[jour] = {}
-    for plage in plages_jour:
-        candidats = [p for p in personnes if not absences[p].get((jour, plage), False)]
-        planning[jour][plage] = assigner(jour, plage, candidats)
+    # Graphes
+    fig1 = plot_hours(all_df, ["07h-09h","09h-12h","12h-14h","15h-18h","18h-19h"], "Heures semaine (Lun-Ven)")
+    fig2 = plot_hours(all_df, ["19h-07h (nuit)", "Vendredi 19h-00h", "Samedi 00h-24h", "Dimanche 00h-07h"], "Heures nuits & week-end")
 
-# Planning nuits/week-end
-planning_nuits = {}
-for jour in jours_nuits:
-    planning_nuits[jour] = {}
-    for plage in plages_nuit:
-        candidats = [p for p in personnes if not absences[p].get((jour, plage), False)]
-        planning_nuits[jour][plage] = assigner(jour, plage, candidats)
-
-# --- Affichage planning ---
-st.header("📅 Planning Semaine (7h-19h)")
-for jour, pl in planning.items():
-    st.subheader(jour)
-    st.table(pd.DataFrame.from_dict(pl, orient="index", columns=["Personne assignée"]))
-
-st.header("🌙 Planning Nuits & Week-end")
-for jour, pl in planning_nuits.items():
-    st.subheader(jour)
-    st.table(pd.DataFrame.from_dict(pl, orient="index", columns=["Personne assignée"]))
-
-# --- Graphique heures cumulées ---
-heures_df = pd.DataFrame.from_dict(heures_cumulees, orient="index", columns=["Heures"])
-st.header("📊 Répartition des heures par personne (Total)")
-fig_total = px.bar(heures_df, x=heures_df.index, y="Heures", text="Heures")
-st.plotly_chart(fig_total)
-
-# Séparer graphique semaine vs nuits/week-end
-heures_semaine = {p:0 for p in personnes}
-heures_nuits = {p:0 for p in personnes}
-
-for p in personnes:
-    for jour, pl in planning.items():
-        for plage, perso in pl.items():
-            if perso == p:
-                heures_semaine[p] += duree(plages_jour[plage])
-    for jour, pl in planning_nuits.items():
-        for plage, perso in pl.items():
-            if perso == p:
-                heures_nuits[p] += duree(plages_nuit[plage])
-
-st.header("📊 Heures Semaine (7h-19h)")
-fig_semaine = px.bar(pd.DataFrame.from_dict(heures_semaine, orient='index', columns=["Heures"]),
-                     x=lambda df: df.index, y="Heures", text="Heures")
-st.plotly_chart(fig_semaine)
-
-st.header("📊 Heures Nuits & Week-end")
-fig_nuits = px.bar(pd.DataFrame.from_dict(heures_nuits, orient='index', columns=["Heures"]),
-                   x=lambda df: df.index, y="Heures", text="Heures")
-st.plotly_chart(fig_nuits)
+    col1, col2 = st.columns(2)
+    with col1:
+        if fig1: st.plotly_chart(fig1, use_container_width=True)
+    with col2:
+        if fig2: st.plotly_chart(fig2, use_container_width=True)
