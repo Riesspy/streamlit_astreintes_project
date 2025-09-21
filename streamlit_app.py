@@ -103,23 +103,20 @@ def assign_plage_balanced(day_df, plage, user_hours, is_night=False):
 # Navigation semaine par semaine
 # -------------------------------
 if "week_start" not in st.session_state:
-    st.session_state.week_start = first_day
+    today = datetime.date.today()
+    # Calculer le lundi de la semaine actuelle
+    week_start = today - datetime.timedelta(days=today.weekday())
+    st.session_state.week_start = week_start
 
 col1, col2, col3 = st.columns([1,2,1])
 with col1:
     if st.button("⬅️ Semaine précédente"):
         st.session_state.week_start -= datetime.timedelta(days=7)
-        if st.session_state.week_start < first_day:
-            st.session_state.week_start = first_day
 with col3:
     if st.button("Semaine suivante ➡️"):
         st.session_state.week_start += datetime.timedelta(days=7)
-        last_month_day = datetime.date(year, month, last_day)
-        if st.session_state.week_start > last_month_day:
-            st.session_state.week_start = last_month_day
 
 st.subheader(f"Semaine du {st.session_state.week_start.strftime('%d/%m/%Y')}")
-
 week_days = [st.session_state.week_start + datetime.timedelta(days=i) for i in range(7)
              if (st.session_state.week_start + datetime.timedelta(days=i)).month == month]
 
