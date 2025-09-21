@@ -1,53 +1,61 @@
 import streamlit as st
-import pandas as pd
+import datetime
 from utils.auth import load_users, check_user
-from utils.planning import init_dataframe, save_user_planning, load_all_plannings, plages
+from utils.planning import init_dataframe, save_user_planning, load_all_plannings, get_weeks_of_month, plages, generate_final_week_planning
 from utils.charts import plot_hours
 
 st.set_page_config(page_title="Planning Astreintes", layout="wide")
 
-users = load_users()
-
 st.title("📅 Planning des astreintes")
 
 # --- Login ---
+users = load_users()
 user_code = st.text_input("Entrez votre code personnel :", type="password")
-
 current_user = check_user(user_code, users)
+
 if current_user:
     st.success(f"Bonjour {current_user}, vous pouvez remplir vos plages")
 
-    df = init_dataframe()
+    # --- Sélection du mois ---
+    month = st.selectbox("Sélectionner le mois :", list(range(1,13)), index=datetime.datetime.now().month-1)
+    year = st.number_input("Année :", value=datetime.datetime.now().year, min_value=2020, max_value=2030)
 
-    # Remplissage du tableau
-    for i, row in df.iterrows():
-        jour = row["Jour"]
-        for plage in plages:
-            df.at[i, plage] = st.selectbox(
-                f"{jour} - {plage}", 
-                ["", "N1", "N2", "Backup1", "Backup2", "Absent"], 
-                key=f"{jour}-{plage}-{current_user}"
-            )
+    weeks = get_weeks_of_month(month, year)
 
-    if st.button("💾 Sauvegarder mon planning"):
-        save_user_planning(current_user, df)
-        st.success("Planning sauvegardé avec succès ✅")
+    for start, end in weeks:
+        st.subheader(f"Semaine du {start.strftime('%d/%m/%Y')} au {end.strftime('%d/%m/%Y')}")
+        df = init_dataframe(start)
+
+        # Tableau éditable
+        edited_df = st.data_editor(df, num_rows="dynamic")
+
+        if st.button(f"💾 Sauvegarder Planning ({start.strftime('%d/%m/%Y')})"):
+            save_user_planning(current_user, edited_df)
+            st.success("Planning sauvegardé ✅")
 
 else:
     st.warning("Veuillez entrer un code valide pour continuer.")
 
-# --- Vue globale ---
+# --- Affichage global ---
 st.header("📊 Planning global")
 all_df = load_all_plannings()
 if not all_df.empty:
     st.dataframe(all_df)
 
     # Graphes
-    fig1 = plot_hours(all_df, ["07h-09h","09h-12h","12h-14h","15h-18h","18h-19h"], "Heures semaine (Lun-Ven)")
-    fig2 = plot_hours(all_df, ["19h-07h (nuit)", "Vendredi 19h-00h", "Samedi 00h-24h", "Dimanche 00h-07h"], "Heures nuits & week-end")
+    fig_jour = plot_hours(all_df, ["07h-09h","09h-12h","12h-14h","15h-18h","18h-19h"], "Heures journée (07h-19h)")
+    fig_nuit = plot_hours(all_df, ["19h-00h","00h-07h"], "Heures nuit (19h-07h)")
 
     col1, col2 = st.columns(2)
     with col1:
-        if fig1: st.plotly_chart(fig1, use_container_width=True)
+        if fig_jour: st.plotly_chart(fig_jour, use_container_width=True)
     with col2:
-        if fig2: st.plotly_chart(fig2, use_container_width=True)
+        if fig_nuit: st.plotly_chart(fig_nuit, use_container_width=True)
+
+    # --- Planning final de la semaine ---
+    st.header("📌 Planning final de la semaine")
+    today = datetime.date.today()
+    start_week = today - datetime.timedelta(days=today.weekday())  # lundi
+    final_week_df = generate_final_week_planning(all_df, start_week)
+    if not final_week_df.empty:
+        st.dataframe(final_week_df)
