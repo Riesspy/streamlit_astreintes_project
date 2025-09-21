@@ -22,7 +22,7 @@ month_name = st.selectbox("Sélectionner le mois :", mois, index=datetime.dateti
 month = mois.index(month_name) + 1
 year = st.number_input("Année :", value=datetime.datetime.now().year, min_value=2020, max_value=2030)
 
-# --- Jours du mois (global) ---
+# --- Jours du mois ---
 first_day = datetime.date(year, month, 1)
 last_day = calendar.monthrange(year, month)[1]
 month_days = [first_day + datetime.timedelta(days=i) for i in range(last_day)]
@@ -32,7 +32,18 @@ all_plannings = load_all_plannings()
 if not all_plannings.empty:
     all_plannings["Date"] = pd.to_datetime(all_plannings["Date"]).dt.date
 
-# --- Fonction heures cumulées ---
+# --- Charger le planning standard ---
+def load_standard_planning(user):
+    try:
+        df_standard = pd.read_csv("utils/standard_planning.csv")
+        user_df = df_standard[df_standard["Utilisateur"] == user]
+        if not user_df.empty:
+            return user_df.iloc[0][plages].to_dict()
+    except FileNotFoundError:
+        st.warning("Fichier de planning standard non trouvé.")
+    return {plage: "Absent" for plage in plages}
+
+# --- Calcul des heures cumulées ---
 def compute_user_hours(all_df):
     user_hours = {}
     jour_plages = ["07h-09h","09h-12h","12h-14h","15h-18h","18h-19h"]
@@ -82,14 +93,21 @@ week_days = [st.session_state.week_start + datetime.timedelta(days=i) for i in r
 # --- Tableau utilisateur pour la semaine ---
 if current_user:
     # Charger le planning existant
-    if not all_plannings.empty:
-        user_week_df = all_plannings[
-            (all_plannings["Utilisateur"] == current_user) &
-            (all_plannings["Date"].isin(week_days))
-        ]
-        df = user_week_df.copy() if not user_week_df.empty else init_dataframe(st.session_state.week_start)
+    user_week_df = all_plannings[
+        (all_plannings["Utilisateur"] == current_user) &
+        (all_plannings["Date"].isin(week_days))
+    ]
+    if not user_week_df.empty:
+        df = user_week_df.copy()
     else:
-        df = init_dataframe(st.session_state.week_start)
+        # Pré-remplissage avec planning standard
+        standard = load_standard_planning(current_user)
+        rows = []
+        for day in week_days:
+            row = {"Date": day, "Jour": day.strftime("%A"), "Utilisateur": current_user}
+            row.update(standard)
+            rows.append(row)
+        df = pd.DataFrame(rows)
 
     options = ["N1", "N2", "Backup1", "Backup2", "Absent"]
     column_config = {plage: st.column_config.SelectboxColumn(options=options, label=plage) for plage in plages}
