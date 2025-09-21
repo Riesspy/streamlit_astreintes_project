@@ -17,7 +17,10 @@ users = load_users()
 user_code = st.text_input("Entrez votre code personnel :", type="password")
 current_user = check_user(user_code, users)
 
-users_list = list(users.values())
+if current_user:
+    st.success(f"Connecté en tant que : {current_user}")
+else:
+    st.warning("Veuillez entrer votre code pour vous connecter.")
 
 # -------------------------------
 # Sélection du mois et année
