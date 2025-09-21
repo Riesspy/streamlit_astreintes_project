@@ -3,6 +3,8 @@ import datetime
 from utils.auth import load_users, check_user
 from utils.planning import init_dataframe, save_user_planning, load_all_plannings, get_weeks_of_month, plages, generate_final_week_planning
 from utils.charts import plot_hours
+import calendar  # pour récupérer les noms des mois
+
 
 st.set_page_config(page_title="Planning Astreintes", layout="wide")
 st.title("📅 Planning des astreintes")
@@ -11,10 +13,12 @@ st.title("📅 Planning des astreintes")
 users = load_users()
 user_code = st.text_input("Entrez votre code personnel :", type="password")
 current_user = check_user(user_code, users)
+mois = [calendar.month_name[i] for i in range(1, 13)]
 
 if current_user:
     st.success(f"Bonjour {current_user}, vous pouvez remplir vos plages")
-    month = st.selectbox("Sélectionner le mois :", list(range(1,13)), index=datetime.datetime.now().month-1)
+    month_name = st.selectbox("Sélectionner le mois :",mois, index=datetime.datetime.now().month-1)
+    month = mois.index(month_name) + 1
     year = st.number_input("Année :", value=datetime.datetime.now().year, min_value=2020, max_value=2030)
     weeks = get_weeks_of_month(month, year)
 
