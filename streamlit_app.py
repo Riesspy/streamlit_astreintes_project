@@ -28,10 +28,11 @@ if current_user:
         edited_df = st.data_editor(
             df,
             column_config={
-                plage: st.column_config.Selectbox(
-                    options=options, 
-                    label=plage)
-                    for plage in df.columns if plage in plages},
+                plage: st.column_config.SelectboxColumn(
+                    options=options,
+                    label=plage
+                ) for plage in plages
+            },
             num_rows="dynamic"
         )
         
