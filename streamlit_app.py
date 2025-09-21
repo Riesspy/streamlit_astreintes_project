@@ -34,9 +34,10 @@ if current_user:
         # Tableau interactif
         edited_df = st.data_editor(df, column_config=column_config, num_rows="dynamic")
 
-        # Remplacer vides par "Absent"
-        for plage in plages:
-            edited_df[plage] = edited_df[plage].fillna("Absent")
+        # Remplacer vides par "Absent" pour les colonnes existantes dans le DataFrame
+        for col in edited_df.columns:
+            if col in plages:
+                edited_df[col] = edited_df[col].fillna("Absent")
 
         if st.button(f"💾 Sauvegarder Planning ({start.strftime('%d/%m/%Y')})"):
             save_user_planning(current_user, edited_df)
