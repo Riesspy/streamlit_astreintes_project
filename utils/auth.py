@@ -1,21 +1,14 @@
-import json
-import os
+users_dict = {
+    "julie": "Julie",
+    "lynda": "Lynda",
+    "riadh": "Riadh",
+    "estelle": "Estelle",
+    "florian": "Florian",
+    "mathias": "Mathias"
+}
 
-def load_users(filepath="data/users.json"):
-    if not os.path.exists(filepath):
-        # Valeurs par défaut
-        return {
-            "JULIE": "Julie",
-            "LYNDA": "Lynda",
-            "RIADH": "Riadh",
-            "ESTELLE": "Estelle",
-            "FLORIAN": "Florian",
-            "MATHIAS": "Mathias"
-        }
-    with open(filepath, "r") as f:
-        return json.load(f)
+def load_users():
+    return users_dict
 
 def check_user(code, users):
-    if code in users:
-        return users[code]
-    return None
+    return users.get(code, None)
