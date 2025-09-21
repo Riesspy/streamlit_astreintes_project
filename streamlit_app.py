@@ -61,32 +61,6 @@ def save_standard(user, df_user):
     df_standard = pd.concat([df_standard, pd.DataFrame([new_row])], ignore_index=True)
     df_standard.to_csv(STANDARD_FILE, index=False)
 
-# --- Calcul heures cumulées ---
-def compute_user_hours(all_df):
-    user_hours = {}
-    jour_plages = ["07h-09h","09h-12h","12h-14h","15h-18h","18h-19h"]
-    nuit_plages = ["19h-00h","00h-07h"]
-    for user in all_df["Utilisateur"].unique():
-        df_user = all_df[all_df["Utilisateur"] == user]
-        day_hours = df_user[jour_plages].applymap(lambda x: 1 if x in ["N1","N2","Backup1","Backup2"] else 0).sum().sum()
-        night_hours = df_user[nuit_plages].applymap(lambda x: 1 if x in ["N1","N2","Backup1","Backup2"] else 0).sum().sum()
-        user_hours[user] = {"jour": day_hours, "nuit": night_hours}
-    return user_hours
-
-# --- Attribution équilibrée N1/N2 ---
-def assign_plage_final(day_df, plage, user_hours, is_night=False):
-    result = {"N1": "", "N2": ""}
-    for priority in ["N1", "N2"]:
-        users_priority = day_df[day_df[plage] == priority]
-        if not users_priority.empty:
-            if is_night:
-                users_priority = users_priority.assign(total_hours=users_priority["Utilisateur"].map(lambda u: user_hours[u]["nuit"]))
-            else:
-                users_priority = users_priority.assign(total_hours=users_priority["Utilisateur"].map(lambda u: user_hours[u]["jour"]))
-            selected_user = users_priority.sort_values("total_hours").iloc[0]["Utilisateur"]
-            result[priority] = selected_user
-    return result
-
 # --- Semaine actuelle ---
 if "week_start" not in st.session_state:
     today = datetime.date.today()
@@ -136,10 +110,9 @@ if current_user:
             save_standard(current_user, edited_df)
             st.success("Planning standard mis à jour ✅")
 
-# --- Planning final semaine (N1 et N2 affichés) ---
+# --- Planning final semaine (affiche tous N1/N2) ---
 st.header("📌 Planning final de la semaine")
 if not all_plannings.empty:
-    user_hours = compute_user_hours(all_plannings)
     week_table_rows = []
     week_df = all_plannings[all_plannings["Date"].isin(week_days)].copy()
 
@@ -147,16 +120,20 @@ if not all_plannings.empty:
         row = {"Date": day, "Jour": day.strftime("%A")}
         day_df = week_df[week_df["Date"] == day]
         for plage in plages:
-            is_night = plage in ["19h-00h", "00h-07h"]
-            assigned = assign_plage_final(day_df, plage, user_hours, is_night=is_night)
-            if assigned["N1"] and assigned["N2"]:
-                row[plage] = f"N1 {assigned['N1']} | N2 {assigned['N2']}"
-            elif assigned["N1"]:
-                row[plage] = f"N1 {assigned['N1']}"
-            elif assigned["N2"]:
-                row[plage] = f"N2 {assigned['N2']}"
-            else:
-                row[plage] = ""
+            n1_users = day_df[day_df[plage] == "N1"]["Utilisateur"].tolist()
+            n2_users = day_df[day_df[plage] == "N2"]["Utilisateur"].tolist()
+
+            n1_str = ", ".join(n1_users)
+            n2_str = ", ".join(n2_users)
+
+            cell_str = ""
+            if n1_str:
+                cell_str += f"N1 {n1_str}"
+            if n2_str:
+                if cell_str:
+                    cell_str += " | "
+                cell_str += f"N2 {n2_str}"
+            row[plage] = cell_str
         week_table_rows.append(row)
 
     week_table_df = pd.DataFrame(week_table_rows)
