@@ -34,10 +34,11 @@ if current_user:
 
         # Charger le planning sauvegardé de l'utilisateur pour cette semaine
         if not all_plannings.empty:
+            all_plannings["Date"] = pd.to_datetime(all_plannings["Date"]).dt.date
             user_week_df = all_plannings[
                 (all_plannings["Utilisateur"] == current_user) &
-                (pd.to_datetime(all_plannings["Date"]) >= pd.Timestamp(start)) &
-                (pd.to_datetime(all_plannings["Date"]) <= pd.Timestamp(end))
+                (all_plannings["Date"] >= start) &
+                (all_plannings["Date"] <= end)
             ]
             if not user_week_df.empty:
                 df = user_week_df.copy()
@@ -70,24 +71,4 @@ else:
 st.header("📊 Planning global")
 all_df = load_all_plannings()
 if not all_df.empty:
-    st.dataframe(all_df)
-
-    # Graphes d'heures
-    fig_jour = plot_hours(all_df, ["07h-09h","09h-12h","12h-14h","15h-18h","18h-19h"], "Heures journée (07h-19h)")
-    fig_nuit = plot_hours(all_df, ["19h-00h","00h-07h"], "Heures nuit (19h-07h)")
-
-    col1, col2 = st.columns(2)
-    with col1:
-        if fig_jour: st.plotly_chart(fig_jour, use_container_width=True)
-    with col2:
-        if fig_nuit: st.plotly_chart(fig_nuit, use_container_width=True)
-
-    # Planning final de la semaine
-    st.header("📌 Planning final de la semaine")
-    today = datetime.date.today()
-    start_week = today - datetime.timedelta(days=today.weekday())
-    final_week_df = generate_final_week_planning(all_df, start_week)
-    if not final_week_df.empty:
-        st.dataframe(final_week_df)
-    else:
-        st.info("Le planning final est vide. Assurez-vous que des utilisateurs ont rempli leurs plannings pour cette semaine.")
+    all_df["Date"] = pd.to_datetime(all_df["Date"]).dt._
