@@ -4,13 +4,8 @@ import os
 import calendar
 from datetime import datetime, timedelta
 
-# 📌 Fichier standard
+# 📂 Fichier du planning standard
 STANDARD_FILE = "utils/standard_planning.csv"
-
-# 📌 Configuration Streamlit
-st.set_page_config(page_title="Planning Astreintes", layout="wide")
-
-st.title("📅 Planning des Astreintes - Vue par semaine")
 
 # ---- UPLOAD / CHARGEMENT PLANNING STANDARD ----
 st.sidebar.header("⚙️ Configuration du planning standard")
@@ -22,58 +17,50 @@ if uploaded_file is not None:
     os.makedirs("utils", exist_ok=True)
     df_standard.to_csv(STANDARD_FILE, index=False)
     st.sidebar.success("✅ Nouveau planning standard chargé et sauvegardé.")
-elif os.path.exists(STANDARD_FILE):
-    df_standard = pd.read_csv(STANDARD_FILE)
-    st.sidebar.info("📂 Planning standard chargé automatiquement.")
 else:
-    st.sidebar.warning("⚠️ Aucun planning standard trouvé. Veuillez uploader un fichier CSV.")
-    st.stop()
+    try:
+        if os.path.exists(STANDARD_FILE) and os.path.getsize(STANDARD_FILE) > 0:
+            df_standard = pd.read_csv(STANDARD_FILE)
+            st.sidebar.info("📂 Planning standard chargé automatiquement.")
+        else:
+            raise FileNotFoundError
+    except (FileNotFoundError, pd.errors.EmptyDataError):
+        st.sidebar.warning("⚠️ Aucun planning standard trouvé. Initialisation d’un modèle vide...")
 
-# ---- GESTION DES SEMAINES ----
-today = datetime.today()
-current_week = today.isocalendar()[1]  # Numéro de semaine courante
-year = today.year
+        # Création d’un planning vide pour le mois courant
+        plages = ["07h-09h", "09h-12h", "12h-14h", "15h-18h", "18h-19h", "19h-00h", "00h-07h"]
+        today = datetime.today()
+        year, month = today.year, today.month
+        days_in_month = calendar.monthrange(year, month)[1]
 
-selected_week = st.sidebar.number_input(
-    "📌 Choisir une semaine",
-    min_value=1,
-    max_value=52,
-    value=current_week
-)
+        rows = []
+        for d in range(1, days_in_month + 1):
+            date = datetime(year, month, d)
+            row = {"Date": date.strftime("%Y-%m-%d"), "Jour": calendar.day_name[date.weekday()]}
+            for plage in plages:
+                row[plage] = ""
+            rows.append(row)
 
-# Déterminer les dates de la semaine sélectionnée
-first_day_of_year = datetime(year, 1, 1)
-first_day_of_week = first_day_of_year + timedelta(weeks=selected_week - 1)
-week_dates = [first_day_of_week + timedelta(days=i) for i in range(7)]
-
-# ---- CONSTRUCTION DU PLANNING FINAL ----
-# On récupère uniquement les jours de la semaine sélectionnée depuis le standard
-df_week = df_standard[df_standard["Date"].isin([d.strftime("%Y-%m-%d") for d in week_dates])]
-
-if df_week.empty:
-    st.warning("⚠️ Aucun planning trouvé pour cette semaine. Complétez le standard.")
-else:
-    # Édition du planning
-    st.subheader(f"📆 Planning de la semaine {selected_week} - {year}")
-    edited_df = st.data_editor(
-        df_week,
-        num_rows="fixed",
-        use_container_width=True
-    )
-
-    # Sauvegarde après modification
-    if st.button("💾 Sauvegarder les modifications"):
-        # Mise à jour du fichier standard
-        df_standard.update(edited_df)
+        df_standard = pd.DataFrame(rows)
+        os.makedirs("utils", exist_ok=True)
         df_standard.to_csv(STANDARD_FILE, index=False)
-        st.success("✅ Modifications sauvegardées dans le planning standard.")
+        st.sidebar.success("✅ Planning standard vide créé automatiquement.")
 
-# ---- AFFICHAGE DU PLANNING MENSUEL (optionnel) ----
-if st.sidebar.checkbox("📊 Voir le planning du mois"):
-    month = st.sidebar.selectbox("Sélectionner un mois", range(1, 13), index=today.month - 1)
-    month_days = calendar.monthrange(year, month)[1]
-    month_dates = [datetime(year, month, d).strftime("%Y-%m-%d") for d in range(1, month_days + 1)]
+# ---- AFFICHAGE DU PLANNING ----
+st.title("📅 Planning des Astreintes")
 
-    df_month = df_standard[df_standard["Date"].isin(month_dates)]
-    st.subheader(f"📅 Planning du mois {calendar.month_name[month]} {year}")
-    st.dataframe(df_month, use_container_width=True)
+# Choix de la semaine à afficher
+df_standard["Date"] = pd.to_datetime(df_standard["Date"])
+df_standard["Semaine"] = df_standard["Date"].dt.isocalendar().week
+
+semaines_dispo = sorted(df_standard["Semaine"].unique())
+semaine_sel = st.selectbox("Sélectionner une semaine :", semaines_dispo)
+
+df_semaine = df_standard[df_standard["Semaine"] == semaine_sel]
+
+st.subheader(f"Planning de la semaine {semaine_sel}")
+st.dataframe(df_semaine, use_container_width=True)
+
+# ---- PLANNING FINAL ----
+st.subheader("📊 Planning Final du Mois")
+st.dataframe(df_standard, use_container_width=True)
