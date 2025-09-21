@@ -76,7 +76,6 @@ def generate_final_week_planning(all_df, start_date):
     
     for plage in plages:
         def select_user(sub_df):
-            # Priorité à la personne ayant le moins d'heures
             sub_df = sub_df[sub_df[plage].isin(["N1","N2"])]
             if sub_df.empty:
                 return ""
