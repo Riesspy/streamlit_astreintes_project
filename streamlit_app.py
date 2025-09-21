@@ -147,10 +147,17 @@ if current_user:
 
     edited_df = st.data_editor(df, column_config=column_config, num_rows="dynamic")
 
-    if st.button("💾 Sauvegarder la semaine et le standard"):
-        save_user_planning(current_user, edited_df)
-        save_standard(current_user, edited_df)
-        st.success("Planning sauvegardé ✅")
+    # Deux boutons séparés
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("💾 Sauvegarder la semaine"):
+            save_user_planning(current_user, edited_df)
+            st.success("Planning de la semaine sauvegardé ✅")
+
+    with col2:
+        if st.button("💾 Sauvegarder comme standard"):
+            save_standard(current_user, edited_df)
+            st.success("Planning standard mis à jour ✅")
 
 # -------------------------------
 # Planning final de la semaine
