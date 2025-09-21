@@ -6,6 +6,7 @@ from utils.auth import load_users, check_user
 from utils.planning import save_user_planning, load_all_plannings, plages
 import os
 import plotly.express as px
+from utils.charts import plot_hours
 
 st.set_page_config(page_title="Planning Astreintes", layout="wide")
 st.title("📅 Planning des astreintes")
