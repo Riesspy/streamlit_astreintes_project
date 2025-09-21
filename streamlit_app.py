@@ -3,47 +3,73 @@ import datetime
 import calendar
 import pandas as pd
 from utils.auth import load_users, check_user
-from utils.planning import init_dataframe, save_user_planning, load_all_plannings, plages
+from utils.planning import save_user_planning, load_all_plannings, plages
 from utils.charts import plot_hours
+import os
 
 st.set_page_config(page_title="Planning Astreintes", layout="wide")
 st.title("📅 Planning des astreintes")
 
-# --- Login ---
+# -------------------------------
+# Gestion des utilisateurs
+# -------------------------------
 users = load_users()
 user_code = st.text_input("Entrez votre code personnel :", type="password")
 current_user = check_user(user_code, users)
 
 users_list = list(users.values())
 
-# --- Sélection du mois et année ---
+# -------------------------------
+# Sélection du mois et année
+# -------------------------------
 mois = [calendar.month_name[i] for i in range(1, 13)]
 month_name = st.selectbox("Sélectionner le mois :", mois, index=datetime.datetime.now().month-1)
 month = mois.index(month_name) + 1
 year = st.number_input("Année :", value=datetime.datetime.now().year, min_value=2020, max_value=2030)
 
-# --- Jours du mois ---
+# -------------------------------
+# Jours du mois
+# -------------------------------
 first_day = datetime.date(year, month, 1)
 last_day = calendar.monthrange(year, month)[1]
 month_days = [first_day + datetime.timedelta(days=i) for i in range(last_day)]
 
-# --- Charger tous les plannings existants ---
+# -------------------------------
+# Charger tous les plannings existants
+# -------------------------------
 all_plannings = load_all_plannings()
 if not all_plannings.empty:
     all_plannings["Date"] = pd.to_datetime(all_plannings["Date"]).dt.date
 
-# --- Charger le planning standard ---
-def load_standard_planning(user):
-    try:
-        df_standard = pd.read_csv("utils/standard_planning.csv")
+# -------------------------------
+# Charger ou créer planning standard
+# -------------------------------
+STANDARD_FILE = "utils/standard_planning.csv"
+
+def load_standard(user):
+    if os.path.exists(STANDARD_FILE):
+        df_standard = pd.read_csv(STANDARD_FILE)
         user_df = df_standard[df_standard["Utilisateur"] == user]
         if not user_df.empty:
             return user_df.iloc[0][plages].to_dict()
-    except FileNotFoundError:
-        st.warning("Fichier de planning standard non trouvé.")
-    return {plage: "Absent" for plage in plages}
+    # Si pas de fichier ou pas de planning existant pour l'utilisateur, renvoyer vide
+    return {plage: "" for plage in plages}
 
-# --- Calcul des heures cumulées ---
+def save_standard(user, df_user):
+    # Charger fichier existant
+    if os.path.exists(STANDARD_FILE):
+        df_standard = pd.read_csv(STANDARD_FILE)
+        df_standard = df_standard[df_standard["Utilisateur"] != user]  # Supprimer ancien
+    else:
+        df_standard = pd.DataFrame(columns=["Utilisateur"] + plages)
+    new_row = {"Utilisateur": user}
+    new_row.update(df_user.iloc[0][plages].to_dict())
+    df_standard = pd.concat([df_standard, pd.DataFrame([new_row])], ignore_index=True)
+    df_standard.to_csv(STANDARD_FILE, index=False)
+
+# -------------------------------
+# Calcul des heures cumulées
+# -------------------------------
 def compute_user_hours(all_df):
     user_hours = {}
     jour_plages = ["07h-09h","09h-12h","12h-14h","15h-18h","18h-19h"]
@@ -55,7 +81,9 @@ def compute_user_hours(all_df):
         user_hours[user] = {"jour": day_hours, "nuit": night_hours}
     return user_hours
 
-# --- Attribution par priorité ---
+# -------------------------------
+# Attribution équilibrée
+# -------------------------------
 def assign_plage_balanced(day_df, plage, user_hours, is_night=False):
     for priority in ["N1","N2","Backup1","Backup2"]:
         users_priority = day_df[day_df[plage] == priority]
@@ -66,9 +94,11 @@ def assign_plage_balanced(day_df, plage, user_hours, is_night=False):
                 users_priority = users_priority.assign(total_hours=users_priority["Utilisateur"].map(lambda u: user_hours[u]["jour"]))
             selected_user = users_priority.sort_values("total_hours").iloc[0]["Utilisateur"]
             return selected_user
-    return "Absent"
+    return ""
 
-# --- Sélecteur de semaine avec boutons ---
+# -------------------------------
+# Navigation semaine par semaine
+# -------------------------------
 if "week_start" not in st.session_state:
     st.session_state.week_start = first_day
 
@@ -90,18 +120,21 @@ st.subheader(f"Semaine du {st.session_state.week_start.strftime('%d/%m/%Y')}")
 week_days = [st.session_state.week_start + datetime.timedelta(days=i) for i in range(7)
              if (st.session_state.week_start + datetime.timedelta(days=i)).month == month]
 
-# --- Tableau utilisateur pour la semaine ---
+# -------------------------------
+# Tableau utilisateur de la semaine
+# -------------------------------
 if current_user:
-    # Charger le planning existant
+    # Charger planning existant pour la semaine
     user_week_df = all_plannings[
         (all_plannings["Utilisateur"] == current_user) &
         (all_plannings["Date"].isin(week_days))
     ]
+
     if not user_week_df.empty:
         df = user_week_df.copy()
     else:
-        # Pré-remplissage avec planning standard
-        standard = load_standard_planning(current_user)
+        # Pré-remplissage avec standard
+        standard = load_standard(current_user)
         rows = []
         for day in week_days:
             row = {"Date": day, "Jour": day.strftime("%A"), "Utilisateur": current_user}
@@ -109,19 +142,19 @@ if current_user:
             rows.append(row)
         df = pd.DataFrame(rows)
 
-    options = ["N1", "N2", "Backup1", "Backup2", "Absent"]
+    options = ["N1", "N2", "Backup1", "Backup2", ""]
     column_config = {plage: st.column_config.SelectboxColumn(options=options, label=plage) for plage in plages}
 
     edited_df = st.data_editor(df, column_config=column_config, num_rows="dynamic")
-    for col in edited_df.columns:
-        if col in plages:
-            edited_df[col] = edited_df[col].fillna("Absent")
 
-    if st.button("💾 Sauvegarder la semaine"):
+    if st.button("💾 Sauvegarder la semaine et le standard"):
         save_user_planning(current_user, edited_df)
+        save_standard(current_user, edited_df)
         st.success("Planning sauvegardé ✅")
 
-# --- Planning final de la semaine (tableau large) ---
+# -------------------------------
+# Planning final de la semaine
+# -------------------------------
 st.header("📌 Planning final de la semaine")
 if not all_plannings.empty:
     user_hours = compute_user_hours(all_plannings)
@@ -139,7 +172,7 @@ if not all_plannings.empty:
     week_table_df = pd.DataFrame(week_table_rows)
     st.dataframe(week_table_df)
 
-    # Graphes
+    # Graphiques
     fig_jour = plot_hours(all_plannings, ["07h-09h","09h-12h","12h-14h","15h-18h","18h-19h"], "Heures journée (07h-19h)")
     fig_nuit = plot_hours(all_plannings, ["19h-00h","00h-07h"], "Heures nuit (19h-07h)")
 
