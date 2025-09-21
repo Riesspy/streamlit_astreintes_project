@@ -2,43 +2,28 @@ import streamlit as st
 import pandas as pd
 import datetime
 import calendar
-import json
-import gspread
+from utils.auth import load_users, check_user
+from utils.planning import init_dataframe, save_user_planning, load_all_plannings, plages
+from utils.charts import plot_hours
 from google.oauth2.service_account import Credentials
-from utils.planning import plages
+from googleapiclient.discovery import build
+import io
 
 st.set_page_config(page_title="Planning Astreintes", layout="wide")
-st.title("📅 Planning des Astreintes")
+st.title("📅 Planning des astreintes")
 
-# --- Auth Google Drive ---
-creds_dict = json.loads(st.secrets["google_drive"]["service_account_json"])
-creds = Credentials.from_service_account_info(creds_dict)
-gc = gspread.authorize(creds)
-
-# --- Ouvrir le Google Sheet (à créer avant dans Drive) ---
-SHEET_NAME = "Planning_Astreintes"
-try:
-    sh = gc.open(SHEET_NAME)
-except gspread.SpreadsheetNotFound:
-    sh = gc.create(SHEET_NAME)
-    sh.share(None, perm_type='anyone', role='writer')
-worksheet = sh.sheet1
-
-# --- Utilisateurs ---
-users_list = ["Julie","Lynda","Riadh","Estelle","Florian","Mathias"]
-
-user_code = st.text_input("Entrez votre nom :", type="default")
-current_user = user_code if user_code in users_list else None
-
+# --- Login ---
+users = load_users()
+user_code = st.text_input("Entrez votre code personnel :", type="password")
+current_user = check_user(user_code, users)
 if current_user:
     st.success(f"Connecté en tant que {current_user}")
-else:
-    st.warning("Nom utilisateur invalide !")
+users_list = list(users.values())
 
-# --- Sélection mois/année ---
-mois = [calendar.month_name[i] for i in range(1,13)]
+# --- Mois et année ---
+mois = [calendar.month_name[i] for i in range(1, 13)]
 month_name = st.selectbox("Sélectionner le mois :", mois, index=datetime.datetime.now().month-1)
-month = mois.index(month_name)+1
+month = mois.index(month_name) + 1
 year = st.number_input("Année :", value=datetime.datetime.now().year, min_value=2020, max_value=2030)
 
 # --- Jours du mois ---
@@ -46,91 +31,145 @@ first_day = datetime.date(year, month, 1)
 last_day = calendar.monthrange(year, month)[1]
 month_days = [first_day + datetime.timedelta(days=i) for i in range(last_day)]
 
-# --- Charger le planning existant depuis Google Sheet ---
-def load_planning():
+# --- Google Drive Credentials ---
+creds_dict = {
+    "type": st.secrets["google_drive"]["type"],
+    "project_id": st.secrets["google_drive"]["project_id"],
+    "private_key_id": st.secrets["google_drive"]["private_key_id"],
+    "private_key": st.secrets["google_drive"]["private_key"],
+    "client_email": st.secrets["google_drive"]["client_email"],
+    "client_id": st.secrets["google_drive"]["client_id"],
+    "auth_uri": st.secrets["google_drive"]["auth_uri"],
+    "token_uri": st.secrets["google_drive"]["token_uri"],
+    "auth_provider_x509_cert_url": st.secrets["google_drive"]["auth_provider_x509_cert_url"],
+    "client_x509_cert_url": st.secrets["google_drive"]["client_x509_cert_url"]
+}
+creds = Credentials.from_service_account_info(creds_dict)
+drive_service = build('drive', 'v3', credentials=creds)
+FOLDER_ID = st.secrets["google_drive"]["folder_id"]  # dossier où stocker les CSV
+
+# --- Fonction Google Drive ---
+def upload_csv_to_drive(file_name, df):
+    csv_buffer = io.StringIO()
+    df.to_csv(csv_buffer, index=False)
+    media_body = csv_buffer.getvalue().encode()
+    file_metadata = {
+        'name': file_name,
+        'parents': [FOLDER_ID]
+    }
+    # Vérifie si le fichier existe
+    results = drive_service.files().list(q=f"name='{file_name}' and '{FOLDER_ID}' in parents", spaces='drive').execute()
+    items = results.get('files', [])
+    if items:
+        file_id = items[0]['id']
+        drive_service.files().update(fileId=file_id, media_body=media_body).execute()
+    else:
+        drive_service.files().create(body=file_metadata, media_body=media_body).execute()
+
+# --- Charger tous les plannings existants ---
+all_plannings = load_all_plannings()
+if not all_plannings.empty:
+    all_plannings["Date"] = pd.to_datetime(all_plannings["Date"]).dt.date
+
+# --- Charger standard ---
+def load_standard_planning(user):
     try:
-        data = worksheet.get_all_records()
-        return pd.DataFrame(data)
-    except:
-        return pd.DataFrame()
+        df_standard = pd.read_csv("utils/standard_planning.csv")
+        user_df = df_standard[df_standard["Utilisateur"] == user]
+        if not user_df.empty:
+            return user_df.iloc[0][plages].to_dict()
+    except FileNotFoundError:
+        st.warning("Fichier de planning standard non trouvé.")
+    return {plage: "" for plage in plages}
 
-all_plannings = load_planning()
+# --- Calcul des heures cumulées ---
+def compute_user_hours(all_df):
+    user_hours = {}
+    jour_plages = ["07h-09h","09h-12h","12h-14h","15h-18h","18h-19h"]
+    nuit_plages = ["19h-00h","00h-07h","18h-19h"]
+    for user in all_df["Utilisateur"].unique():
+        df_user = all_df[all_df["Utilisateur"] == user]
+        day_hours = df_user[jour_plages].applymap(lambda x: 1 if x in ["N1","N2","Backup1","Backup2"] else 0).sum().sum()
+        night_hours = df_user[nuit_plages].applymap(lambda x: 1 if x in ["N1","N2","Backup1","Backup2"] else 0).sum().sum()
+        user_hours[user] = {"jour": day_hours, "nuit": night_hours}
+    return user_hours
 
-# --- Tableau utilisateur ---
+# --- Attribution par priorité ---
+def assign_plage_balanced(day_df, plage, user_hours, is_night=False):
+    for priority in ["N1","N2","Backup1","Backup2"]:
+        users_priority = day_df[day_df[plage] == priority]
+        if not users_priority.empty:
+            if is_night:
+                users_priority = users_priority.assign(total_hours=users_priority["Utilisateur"].map(lambda u: user_hours[u]["nuit"]))
+            else:
+                users_priority = users_priority.assign(total_hours=users_priority["Utilisateur"].map(lambda u: user_hours[u]["jour"]))
+            selected_user = users_priority.sort_values("total_hours").iloc[0]["Utilisateur"]
+            return selected_user
+    return ""
+
+# --- Semaine actuelle ---
+today = datetime.date.today()
+week_start = today - datetime.timedelta(days=today.weekday())
+week_days = [week_start + datetime.timedelta(days=i) for i in range(7)]
+
+# --- Tableau utilisateur pour la semaine ---
 if current_user:
-    # Pré-remplissage semaine avec standard si existant
+    st.subheader(f"Votre planning pour la semaine du {week_start.strftime('%d/%m/%Y')}")
+    # Pré-remplissage avec planning standard
+    standard = load_standard_planning(current_user)
     rows = []
-    for day in month_days:
+    for day in week_days:
         row = {"Date": day, "Jour": day.strftime("%A"), "Utilisateur": current_user}
-        for plage in plages:
-            row[plage] = ""
+        row.update(standard)
         rows.append(row)
     df = pd.DataFrame(rows)
 
-    options = ["N1","N2","Backup1","Backup2",""]
+    options = ["N1", "N2", "Backup1", "Backup2", ""]
     column_config = {plage: st.column_config.SelectboxColumn(options=options, label=plage) for plage in plages}
-
     edited_df = st.data_editor(df, column_config=column_config, num_rows="dynamic")
+    for col in edited_df.columns:
+        if col in plages:
+            edited_df[col] = edited_df[col].fillna("")
 
-    # --- Boutons sauvegarde ---
     col1, col2 = st.columns(2)
     with col1:
-        if st.button("💾 Sauvegarder semaine"):
-            # Filtrer les jours de la semaine actuelle
-            week_start = datetime.date.today() - datetime.timedelta(days=datetime.date.today().weekday())
-            week_end = week_start + datetime.timedelta(days=6)
-            week_df = edited_df[(edited_df["Date"] >= week_start) & (edited_df["Date"] <= week_end)]
-            # Ajouter/mettre à jour dans Google Sheet
-            for _, row in week_df.iterrows():
-                worksheet.append_row([row["Date"], row["Jour"], row["Utilisateur"]]+[row[p] for p in plages])
-            st.success("Planning semaine sauvegardé ✅")
-
+        if st.button("💾 Sauvegarder la semaine"):
+            save_user_planning(current_user, edited_df)
+            upload_csv_to_drive(f"{current_user}_week_{week_start}.csv", edited_df)
+            st.success("Planning sauvegardé ✅")
     with col2:
-        if st.button("💾 Sauvegarder comme planning standard"):
-            # Ici on pourrait sauvegarder la version standard par utilisateur
+        if st.button("💾 Sauvegarder comme standard"):
+            edited_df_standard = edited_df.copy()
+            edited_df_standard = edited_df_standard[["Utilisateur"] + plages]
+            edited_df_standard.to_csv("utils/standard_planning.csv", index=False)
+            upload_csv_to_drive("standard_planning.csv", edited_df_standard)
             st.success("Planning standard sauvegardé ✅")
 
-# --- Planning final de la semaine (N1/N2) ---
+# --- Planning final de la semaine ---
 st.header("📌 Planning final de la semaine")
 if not all_plannings.empty:
-    week_start = datetime.date.today() - datetime.timedelta(days=datetime.date.today().weekday())
-    week_end = week_start + datetime.timedelta(days=6)
-    week_df = all_plannings[(pd.to_datetime(all_plannings["Date"]).dt.date >= week_start) &
-                            (pd.to_datetime(all_plannings["Date"]).dt.date <= week_end)]
-    final_rows = []
-    for day in sorted(week_df["Date"].unique()):
-        row = {"Date": day, "Jour": pd.to_datetime(day).strftime("%A")}
+    user_hours = compute_user_hours(all_plannings)
+    week_table_rows = []
+    week_df = all_plannings[all_plannings["Date"].isin(week_days)].copy()
+    for day in week_days:
+        row = {"Date": day, "Jour": day.strftime("%A")}
         day_df = week_df[week_df["Date"] == day]
         for plage in plages:
-            n1_users = day_df[day_df[plage]=="N1"]["Utilisateur"].tolist()
-            n2_users = day_df[day_df[plage]=="N2"]["Utilisateur"].tolist()
-            val = ""
-            if n1_users:
-                val += "N1: " + ",".join(n1_users)
-            if n2_users:
-                val += " | N2: " + ",".join(n2_users)
-            row[plage] = val
-        final_rows.append(row)
-    final_df = pd.DataFrame(final_rows)
-    st.dataframe(final_df)
+            is_night = plage in ["19h-00h","00h-07h"]
+            row[plage] = assign_plage_balanced(day_df, plage, user_hours, is_night=is_night)
+        week_table_rows.append(row)
+    week_table_df = pd.DataFrame(week_table_rows)
+    st.dataframe(week_table_df)
 
-# --- Graphiques jour/nuit ---
-st.header("📊 Graphes heures")
-if not all_plannings.empty:
-    # Calcul des heures par utilisateur
-    def compute_hours(df, heures):
-        result = {}
-        for u in users_list:
-            user_df = df[df["Utilisateur"]==u]
-            total = 0
-            for h in heures:
-                total += (user_df[h].isin(["N1","N2","Backup1","Backup2"])).sum()
-            result[u] = total
-        return result
+    # Graphes
+    fig_jour = plot_hours(all_plannings, ["07h-09h","09h-12h","12h-14h","15h-18h","18h-19h"], "Heures journée")
+    fig_nuit = plot_hours(all_plannings, ["19h-00h","00h-07h"], "Heures nuit")
+    fig_n2 = plot_hours(all_plannings, ["07h-09h","09h-12h","12h-14h","15h-18h","18h-19h"], "Heures jour N2", filter_priority="N2")
 
-    jour_heures = ["07h-09h","09h-12h","12h-14h","15h-18h","18h-19h"]
-    nuit_heures = ["19h-00h","00h-07h"]
-    df_jour = compute_hours(all_plannings, jour_heures)
-    df_nuit = compute_hours(all_plannings, nuit_heures)
-
-    st.bar_chart(pd.DataFrame([df_jour, df_nuit], index=["Jour","Nuit"]).T)
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        if fig_jour: st.plotly_chart(fig_jour, use_container_width=True)
+    with col2:
+        if fig_nuit: st.plotly_chart(fig_nuit, use_container_width=True)
+    with col3:
+        if fig_n2: st.plotly_chart(fig_n2, use_container_width=True)
