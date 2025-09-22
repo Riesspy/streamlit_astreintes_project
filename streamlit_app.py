@@ -293,40 +293,25 @@ if not all_plannings.empty:
     jour_plages = ["07h-09h", "09h-12h", "12h-14h", "15h-18h", "18h-19h"]
     nuit_plages = ["19h-00h", "00h-07h"]
 
-    # S'assurer que toutes les colonnes existent dans all_plannings pour éviter les erreurs
+    # S'assurer que toutes les colonnes existent dans all_plannings
     for plage in jour_plages + nuit_plages:
         if plage not in all_plannings.columns:
             all_plannings[plage] = ""
 
-    # Graphique heures journée
-    try:
-        fig_jour = plot_hours(all_plannings, jour_plages, "Heures journée (07h-19h)")
-    except Exception as e:
-        st.error(f"Erreur graphique journée: {e}")
-        fig_jour = None
+    # --- Graphiques sécurisés ---
+    def safe_plot(title, plages, filter_role=None):
+        try:
+            return plot_hours(all_plannings, plages, title, filter_role=filter_role)
+        except Exception as e:
+            st.error(f"Erreur graphique {title}: {e}")
+            return None
 
-    # Graphique heures nuit
-    try:
-        fig_nuit = plot_hours(all_plannings, nuit_plages, "Heures nuit (19h-07h)")
-    except Exception as e:
-        st.error(f"Erreur graphique nuit: {e}")
-        fig_nuit = None
+    fig_jour = safe_plot("Heures journée (07h-19h)", jour_plages)
+    fig_nuit = safe_plot("Heures nuit (19h-07h)", nuit_plages)
+    fig_n1 = safe_plot("Heures N1 (total)", jour_plages + nuit_plages, filter_role="N1")
+    fig_n2 = safe_plot("Heures N2 (total)", jour_plages + nuit_plages, filter_role="N2")
 
-    # Graphique N1 (toutes plages)
-    try:
-        fig_n1 = plot_hours(all_plannings, jour_plages + nuit_plages, "Heures N1 (total)", filter_role="N1")
-    except Exception as e:
-        st.error(f"Erreur graphique N1: {e}")
-        fig_n1 = None
-
-    # Graphique N2 (toutes plages)
-    try:
-        fig_n2 = plot_hours(all_plannings, jour_plages + nuit_plages, "Heures N2 (total)", filter_role="N2")
-    except Exception as e:
-        st.error(f"Erreur graphique N2: {e}")
-        fig_n2 = None
-
-    # Affichage des graphiques
+    # --- Affichage ---
     cols = st.columns(2)
     with cols[0]:
         if fig_jour: st.plotly_chart(fig_jour, use_container_width=True)
