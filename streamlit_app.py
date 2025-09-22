@@ -6,6 +6,13 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
 import io
 
+import datetime
+import calendar
+
+from utils.auth import load_users, check_user
+from utils.planning import save_user_planning, load_all_plannings, plages
+from utils.charts import plot_hours
+
 # ---------------- GOOGLE DRIVE AUTH ----------------
 def connect_drive():
     creds_dict = json.loads(st.secrets["google_drive"]["service_account_json"])
