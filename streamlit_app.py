@@ -299,6 +299,11 @@ def save_week(current_user, edited_df):
 
 
 # ---------------- Sauvegarder comme standard ----------------
+
+
+
+
+
 def save_standard(current_user, edited_df):
     if edited_df.empty or "Date" not in edited_df.columns:
         st.error("Impossible de sauvegarder le standard : le planning est vide.")
@@ -329,6 +334,17 @@ def save_standard(current_user, edited_df):
 
     except Exception as e:
         st.error(f"Erreur en sauvegardant le standard: {e}")
+
+col1, col2 = st.columns(2)
+
+with col1:
+    if st.button("💾 Sauvegarder la semaine"):
+        save_week(current_user, edited_df)  # Appelle la fonction corrigée
+
+with col2:
+    if st.button("💾 Sauvegarder comme standard"):
+        save_standard(current_user, edited_df)  # Appelle la fonction corrigée
+
 
 
 # ---------------- Planning final semaine ----------------
