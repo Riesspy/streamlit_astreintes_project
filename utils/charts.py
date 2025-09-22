@@ -1,16 +1,32 @@
-# utils/charts.py
 import plotly.express as px
 import pandas as pd
 
-def plot_hours(df, plages, title="Heures"):
-    if df.empty:
-        return None
-    df_copy = df.copy()
-    # On remplace les valeurs N1, N2, Backup1, Backup2 par 1 et tout le reste par 0
-    for col in plages:
-        if col in df_copy.columns:
-            df_copy[col] = df_copy[col].apply(lambda x: 1 if x in ["N1","N2","Backup1","Backup2"] else 0)
-    df_copy["total"] = df_copy[plages].sum(axis=1)
-    summary = df_copy.groupby("Utilisateur")["total"].sum().reset_index()
-    fig = px.bar(summary, x="Utilisateur", y="total", title=title)
+def plot_hours(df, plages, title, filter_role=None):
+    """
+    df : DataFrame contenant les plannings
+    plages : liste des colonnes à inclure
+    title : titre du graphique
+    filter_role : 'N1', 'N2', 'Backup1', 'Backup2' ou None
+    """
+    df_plot = df.copy()
+
+    # Vérifier que toutes les colonnes existent
+    for plage in plages:
+        if plage not in df_plot.columns:
+            df_plot[plage] = ""
+
+    if filter_role:
+        # compter uniquement les cellules correspondant au rôle
+        df_plot['heures'] = df_plot.apply(lambda row: sum(row[plage] == filter_role for plage in plages), axis=1)
+    else:
+        # compter toutes les assignations N1/N2/Backup
+        df_plot['heures'] = df_plot.apply(lambda row: sum(row[plage] in ["N1", "N2", "Backup1", "Backup2"] for plage in plages), axis=1)
+
+    # Groupement par utilisateur
+    df_grouped = df_plot.groupby('Utilisateur')['heures'].sum().reset_index()
+
+    # Création du graphique bar
+    fig = px.bar(df_grouped, x='Utilisateur', y='heures', title=title, text='heures')
+    fig.update_traces(textposition='outside')
+    fig.update_layout(yaxis=dict(title='Heures'), xaxis=dict(title='Utilisateur'))
     return fig
