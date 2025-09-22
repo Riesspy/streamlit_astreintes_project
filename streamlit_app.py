@@ -1,10 +1,8 @@
-# streamlit_app.py
 import streamlit as st
 import datetime
 import calendar
 import pandas as pd
 import io
-import json
 import os
 
 # Google Drive libs
@@ -50,9 +48,6 @@ def get_or_create_folder(service):
     folder = service.files().create(body=metadata, fields="id").execute()
     return folder.get("id")
 
-
-
-
 def upload_df_to_drive(service, folder_id, filename, df):
     buffer = io.BytesIO()
     buffer.write(df.to_csv(index=False).encode("utf-8"))
@@ -88,14 +83,13 @@ def download_csv_from_drive(service, folder_id, filename):
         return df
     except Exception:
         return None
-    
 
 # --- Initialisation Google Drive ---
 try:
     drive = get_drive_service()
     folder_id = get_or_create_folder(drive)
 
-    # --- Initialisation automatique des fichiers vides ---
+    # Initialisation automatique fichiers CSV vides
     all_cols = ["Date","Jour","Utilisateur","07h-09h","09h-12h","12h-14h","15h-18h","18h-19h","19h-00h","00h-07h"]
     std_cols = ["Utilisateur","07h-09h","09h-12h","12h-14h","15h-18h","18h-19h","19h-00h","00h-07h"]
 
@@ -114,23 +108,56 @@ except Exception as e:
     drive = None
     folder_id = None
     st.warning(f"Impossible de se connecter à Google Drive: {e}")
-    
-    # ---------------- Sidebar et connexion ----------------
-st.sidebar.header("Connexion utilisateur")
-raw_user = st.sidebar.text_input("Entrez votre nom", key="login_user")
-current_user = raw_user.strip().capitalize() if raw_user else None
+
+# ---------------- Login utilisateur ----------------
+current_user = st.sidebar.text_input("Entrez votre nom").strip().upper()  # Normalisation
 if current_user:
     st.sidebar.success(f"Connecté en tant que : {current_user}")
 else:
-    st.sidebar.info("Veuillez entrer votre nom pour accéder au planning.")
+    st.sidebar.info("Veuillez entrer votre nom pour continuer.")
 
-# Menu planning
-st.sidebar.header("Affichage Planning")
-planning_type = st.sidebar.radio(
-    "Choisir le type de planning",
-    ("Planning personnel", "Planning général")
-)
+# ---------------- Sidebar menu ----------------
+menu = st.sidebar.radio("Choisir affichage", ["Planning personnel", "Planning général"])
 
+# ---------------- Fonctions sauvegarde ----------------
+def save_user_planning_drive(current_user, edited_df):
+    edited_df["Utilisateur"] = current_user
+    edited_df["Date"] = pd.to_datetime(edited_df["Date"]).dt.date
+    try:
+        all_plannings_local = download_csv_from_drive(drive, folder_id, "all_plannings.csv")
+        if all_plannings_local is None or all_plannings_local.empty:
+            all_plannings_local = pd.DataFrame(columns=edited_df.columns)
+        else:
+            all_plannings_local["Date"] = pd.to_datetime(all_plannings_local["Date"]).dt.date
+            all_plannings_local = all_plannings_local[
+                ~(
+                    (all_plannings_local["Utilisateur"] == current_user) &
+                    (all_plannings_local["Date"].isin(edited_df["Date"]))
+                )
+            ]
+        all_plannings_local = pd.concat([all_plannings_local, edited_df], ignore_index=True)
+        upload_df_to_drive(drive, folder_id, "all_plannings.csv", all_plannings_local)
+        st.success("Planning de la semaine sauvegardé ✅")
+    except Exception as e:
+        st.error(f"Erreur sauvegarde Drive: {e}")
+
+def save_standard_drive(current_user, edited_df):
+    try:
+        df_standard = download_csv_from_drive(drive, folder_id, "standard_planning.csv")
+        if df_standard is None or df_standard.empty:
+            df_standard = pd.DataFrame(columns=["Utilisateur"] + plages)
+        else:
+            df_standard = df_standard[df_standard["Utilisateur"] != current_user]
+
+        new_row = {"Utilisateur": current_user}
+        new_row.update(edited_df.iloc[0][plages].to_dict())
+        df_standard = pd.concat([df_standard, pd.DataFrame([new_row])], ignore_index=True)
+        upload_df_to_drive(drive, folder_id, "standard_planning.csv", df_standard)
+        st.success("Planning standard sauvegardé ✅")
+    except Exception as e:
+        st.error(f"Erreur sauvegarde standard: {e}")
+    
+ 
 
 
 # ---------------- Choix mois/année ----------------
