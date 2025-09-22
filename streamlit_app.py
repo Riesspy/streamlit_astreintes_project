@@ -121,7 +121,8 @@ menu = st.sidebar.radio("Choisir affichage", ["Planning personnel", "Planning g�
 
 # ---------------- Fonctions sauvegarde ----------------
 def save_user_planning_drive(current_user, edited_df):
-    edited_df["Utilisateur"] = current_user
+    edited_df = edited_df.copy()
+    edited_df["Utilisateur"] = current_user.upper()  # Normalisation
     edited_df["Date"] = pd.to_datetime(edited_df["Date"]).dt.date
     try:
         all_plannings_local = download_csv_from_drive(drive, folder_id, "all_plannings.csv")
@@ -129,6 +130,7 @@ def save_user_planning_drive(current_user, edited_df):
             all_plannings_local = pd.DataFrame(columns=edited_df.columns)
         else:
             all_plannings_local["Date"] = pd.to_datetime(all_plannings_local["Date"]).dt.date
+            # Supprimer anciennes entrées de l'utilisateur pour cette semaine
             all_plannings_local = all_plannings_local[
                 ~(
                     (all_plannings_local["Utilisateur"] == current_user) &
@@ -141,21 +143,24 @@ def save_user_planning_drive(current_user, edited_df):
     except Exception as e:
         st.error(f"Erreur sauvegarde Drive: {e}")
 
+
 def save_standard_drive(current_user, edited_df):
+    edited_df = edited_df.copy()
     try:
         df_standard = download_csv_from_drive(drive, folder_id, "standard_planning.csv")
         if df_standard is None or df_standard.empty:
             df_standard = pd.DataFrame(columns=["Utilisateur"] + plages)
         else:
-            df_standard = df_standard[df_standard["Utilisateur"] != current_user]
+            df_standard = df_standard[df_standard["Utilisateur"] != current_user.upper()]
 
-        new_row = {"Utilisateur": current_user}
+        new_row = {"Utilisateur": current_user.upper()}
         new_row.update(edited_df.iloc[0][plages].to_dict())
         df_standard = pd.concat([df_standard, pd.DataFrame([new_row])], ignore_index=True)
         upload_df_to_drive(drive, folder_id, "standard_planning.csv", df_standard)
         st.success("Planning standard sauvegardé ✅")
     except Exception as e:
         st.error(f"Erreur sauvegarde standard: {e}")
+
     
  
 
