@@ -137,11 +137,18 @@ STANDARD_FILE = "utils/standard_planning.csv"
 def load_standard(user):
     try:
         df_standard = pd.read_csv(STANDARD_FILE)
+        if df_standard.empty:
+            # fichier vide -> retourner dict vide
+            return {plage: "" for plage in plages}
         user_df = df_standard[df_standard["Utilisateur"] == user]
         if not user_df.empty:
             return user_df.iloc[0][plages].to_dict()
     except FileNotFoundError:
-        pass
+        # fichier non trouvé -> retourner dict vide
+        return {plage: "" for plage in plages}
+    except pd.errors.EmptyDataError:
+        # fichier vide -> retourner dict vide
+        return {plage: "" for plage in plages}
     return {plage: "" for plage in plages}
 
 def save_standard_local_and_drive(user, df_user):
