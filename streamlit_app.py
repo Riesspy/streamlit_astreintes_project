@@ -84,16 +84,29 @@ def download_csv_from_drive(service, folder_id, filename):
         return df
     except Exception:
         return None
+    
+    # ---------------- Sidebar et connexion ----------------
+st.sidebar.header("Connexion utilisateur")
+current_user = st.sidebar.text_input("Entrez votre nom")
+if current_user:
+    current_user = current_user.strip()
+    st.sidebar.success(f"Connecté en tant que : {current_user}")
+
+# Menu planning
+st.sidebar.header("Affichage Planning")
+planning_type = st.sidebar.radio(
+    "Choisir le type de planning",
+    ("Planning personnel", "Planning général")
+)
 
 # ---------------- Login ----------------
-users = load_users()
-user_code = st.text_input("Entrez votre code personnel :", type="password")
-current_user = check_user(user_code, users)
-
+st.sidebar.header("Connexion utilisateur")
+current_user = st.sidebar.text_input("Entrez votre nom")
 if current_user:
-    st.success(f"Connecté en tant que : {current_user}")
+    current_user = current_user.strip()
+    st.sidebar.success(f"Connecté en tant que : {current_user}")
 else:
-    st.warning("Veuillez entrer votre code pour vous connecter.")
+    st.sidebar.info("Veuillez entrer votre nom pour accéder au planning.")
 
 # ---------------- Choix mois/année ----------------
 mois = [calendar.month_name[i] for i in range(1, 13)]
@@ -263,47 +276,52 @@ if current_user:
                 st.error(f"Erreur sauvegarde standard: {e}")
 
 # ---------------- Planning final semaine ----------------
-st.header("📌 Planning final de la semaine")
-if not all_plannings.empty:
-    user_hours = compute_user_hours(all_plannings)
-    week_table_rows = []
-    conflicts = []
+if planning_type == "Planning général":
+    st.header("📌 Planning final de la semaine")
+    if not all_plannings.empty:
+        # Calcul des heures
+        user_hours = compute_user_hours(all_plannings)
+        week_table_rows = []
+        conflicts = []
 
-    week_df = all_plannings[all_plannings["Date"].isin(week_days)].copy()
+        # Filtrer seulement les jours du mois sélectionné
+        week_df = all_plannings[all_plannings["Date"].isin(month_days)].copy()
 
-    for day in week_days:
-        row = {"Date": day.strftime("%Y-%m-%d"), "Jour": day.strftime("%A")}
-        day_df = week_df[week_df["Date"] == day]
-        for plage in plages:
-            is_night = plage in ["19h-00h", "00h-07h"]
-            assigned = assign_plage_final(day_df, plage, user_hours, is_night=is_night)
+        for day in month_days:
+            row = {"Date": day.strftime("%Y-%m-%d"), "Jour": day.strftime("%A")}
+            day_df = week_df[week_df["Date"] == day]
+            for plage in plages:
+                is_night = plage in ["19h-00h", "00h-07h"]
+                assigned = assign_plage_final(day_df, plage, user_hours, is_night=is_night)
 
-            n1_list = day_df[day_df[plage] == "N1"]["Utilisateur"].tolist()
-            n2_list = day_df[day_df[plage] == "N2"]["Utilisateur"].tolist()
-            if len(n1_list) > 1:
-                conflicts.append({"Date": day.strftime("%Y-%m-%d"), "Plage": plage, "Role": "N1", "Users": ", ".join(n1_list)})
-            if len(n2_list) > 1:
-                conflicts.append({"Date": day.strftime("%Y-%m-%d"), "Plage": plage, "Role": "N2", "Users": ", ".join(n2_list)})
+                # Détection des conflits
+                n1_list = day_df[day_df[plage] == "N1"]["Utilisateur"].tolist()
+                n2_list = day_df[day_df[plage] == "N2"]["Utilisateur"].tolist()
+                if len(n1_list) > 1:
+                    conflicts.append({"Date": day.strftime("%Y-%m-%d"), "Plage": plage, "Role": "N1", "Users": ", ".join(n1_list)})
+                if len(n2_list) > 1:
+                    conflicts.append({"Date": day.strftime("%Y-%m-%d"), "Plage": plage, "Role": "N2", "Users": ", ".join(n2_list)})
 
-            if assigned["N1"] and assigned["N2"]:
-                row[plage] = f"N1 {assigned['N1']} | N2 {assigned['N2']}"
-            elif assigned["N1"]:
-                row[plage] = f"N1 {assigned['N1']}"
-            elif assigned["N2"]:
-                row[plage] = f"N2 {assigned['N2']}"
-            else:
-                row[plage] = ""
-        week_table_rows.append(row)
+                if assigned["N1"] and assigned["N2"]:
+                    row[plage] = f"N1 {assigned['N1']} | N2 {assigned['N2']}"
+                elif assigned["N1"]:
+                    row[plage] = f"N1 {assigned['N1']}"
+                elif assigned["N2"]:
+                    row[plage] = f"N2 {assigned['N2']}"
+                else:
+                    row[plage] = ""
+            week_table_rows.append(row)
 
-    week_table_df = pd.DataFrame(week_table_rows)
-    st.dataframe(week_table_df, use_container_width=True)
+        week_table_df = pd.DataFrame(week_table_rows)
+        st.dataframe(week_table_df, use_container_width=True)
 
-    if conflicts:
-        st.markdown("### ⚠️ Conflits détectés")
-        df_conflicts = pd.DataFrame(conflicts)
-        st.dataframe(df_conflicts, use_container_width=True)
-    else:
-        st.success("Aucun conflit détecté pour cette semaine ✅")
+        # Affichage des conflits
+        if conflicts:
+            st.markdown("### ⚠️ Conflits détectés")
+            df_conflicts = pd.DataFrame(conflicts)
+            st.dataframe(df_conflicts, use_container_width=True)
+        else:
+            st.success("Aucun conflit détecté pour cette période ✅")
 
         # ---------------- Graphes ----------------
     jour_plages = ["07h-09h", "09h-12h", "12h-14h", "15h-18h", "18h-19h"]
