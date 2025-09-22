@@ -5,6 +5,7 @@ import calendar
 import pandas as pd
 import io
 import json
+import os
 
 # Google Drive libs
 from google.oauth2.service_account import Credentials
@@ -85,15 +86,26 @@ def download_csv_from_drive(service, folder_id, filename):
     except Exception:
         return None
 
-# ---------------- Login ----------------
-users = load_users()
-user_code = st.text_input("Entrez votre code personnel :", type="password")
-current_user = check_user(user_code, users)
+# ---------------- Sidebar Navigation ----------------
+st.sidebar.title("Navigation")
+menu_option = st.sidebar.radio("Menu", ["Mon Planning", "Planning général"])
 
-if current_user:
-    st.success(f"Connecté en tant que : {current_user}")
+# ---------------- Login utilisateur ----------------
+users = load_users()
+if "current_user" not in st.session_state:
+    st.session_state.current_user = ""
+
+user_input = st.sidebar.text_input("Entrez votre nom :", value=st.session_state.current_user)
+user_input_clean = user_input.strip().upper()  # normalisation majuscule
+
+if user_input_clean in [u.upper() for u in users.values()]:
+    st.session_state.current_user = user_input_clean
+    st.sidebar.success(f"Connecté en tant que : {st.session_state.current_user}")
 else:
-    st.warning("Veuillez entrer votre code pour vous connecter.")
+    st.sidebar.warning("Utilisateur non reconnu.")
+    st.session_state.current_user = ""
+
+current_user = st.session_state.current_user
 
 # ---------------- Choix mois/année ----------------
 mois = [calendar.month_name[i] for i in range(1, 13)]
@@ -129,7 +141,7 @@ STANDARD_FILE = "utils/standard_planning.csv"
 def load_standard(user):
     try:
         df_standard = pd.read_csv(STANDARD_FILE)
-        user_df = df_standard[df_standard["Utilisateur"] == user]
+        user_df = df_standard[df_standard["Utilisateur"].str.upper() == user]
         if not user_df.empty:
             return user_df.iloc[0][plages].to_dict()
     except FileNotFoundError:
@@ -140,7 +152,7 @@ def save_standard_local_and_drive(user, df_user):
     try:
         try:
             df_standard = pd.read_csv(STANDARD_FILE)
-            df_standard = df_standard[df_standard["Utilisateur"] != user]
+            df_standard = df_standard[df_standard["Utilisateur"].str.upper() != user]
         except FileNotFoundError:
             df_standard = pd.DataFrame(columns=["Utilisateur"] + plages)
         new_row = {"Utilisateur": user}
@@ -201,8 +213,8 @@ st.subheader(f"Semaine du {st.session_state.week_start.strftime('%d/%m/%Y')}")
 week_days = [st.session_state.week_start + datetime.timedelta(days=i) for i in range(7)
              if (st.session_state.week_start + datetime.timedelta(days=i)).month == month]
 
-# ---------------- Mon Planning ----------------
-if current_user:
+# ---------------- Affichage en fonction du menu ----------------
+if menu_option == "Mon Planning" and current_user:
     user_week_df = all_plannings[
         (all_plannings["Utilisateur"] == current_user) &
         (all_plannings["Date"].isin(week_days))
@@ -244,63 +256,63 @@ if current_user:
             except Exception as e:
                 st.error(f"Erreur sauvegarde standard: {e}")
 
-# ---------------- Planning final semaine ----------------
-st.header("📌 Planning final de la semaine")
-if not all_plannings.empty:
-    user_hours = compute_user_hours(all_plannings)
-    week_table_rows = []
-    conflicts = []
+elif menu_option == "Planning général":
+    st.header("📌 Planning final de la semaine")
+    if not all_plannings.empty:
+        user_hours = compute_user_hours(all_plannings)
+        week_table_rows = []
+        conflicts = []
 
-    week_df = all_plannings[all_plannings["Date"].isin(week_days)].copy()
+        week_df = all_plannings[all_plannings["Date"].isin(week_days)].copy()
 
-    for day in week_days:
-        row = {"Date": day.strftime("%Y-%m-%d"), "Jour": day.strftime("%A")}
-        day_df = week_df[week_df["Date"] == day]
-        for plage in plages:
-            is_night = plage in ["19h-00h", "00h-07h"]
-            assigned = assign_plage_final(day_df, plage, user_hours, is_night=is_night)
+        for day in week_days:
+            row = {"Date": day.strftime("%Y-%m-%d"), "Jour": day.strftime("%A")}
+            day_df = week_df[week_df["Date"] == day]
+            for plage in plages:
+                is_night = plage in ["19h-00h", "00h-07h"]
+                assigned = assign_plage_final(day_df, plage, user_hours, is_night=is_night)
 
-            n1_list = day_df[day_df[plage] == "N1"]["Utilisateur"].tolist()
-            n2_list = day_df[day_df[plage] == "N2"]["Utilisateur"].tolist()
-            if len(n1_list) > 1:
-                conflicts.append({"Date": day.strftime("%Y-%m-%d"), "Plage": plage, "Role": "N1", "Users": ", ".join(n1_list)})
-            if len(n2_list) > 1:
-                conflicts.append({"Date": day.strftime("%Y-%m-%d"), "Plage": plage, "Role": "N2", "Users": ", ".join(n2_list)})
+                n1_list = day_df[day_df[plage] == "N1"]["Utilisateur"].tolist()
+                n2_list = day_df[day_df[plage] == "N2"]["Utilisateur"].tolist()
+                if len(n1_list) > 1:
+                    conflicts.append({"Date": day.strftime("%Y-%m-%d"), "Plage": plage, "Role": "N1", "Users": ", ".join(n1_list)})
+                if len(n2_list) > 1:
+                    conflicts.append({"Date": day.strftime("%Y-%m-%d"), "Plage": plage, "Role": "N2", "Users": ", ".join(n2_list)})
 
-            if assigned["N1"] and assigned["N2"]:
-                row[plage] = f"N1 {assigned['N1']} | N2 {assigned['N2']}"
-            elif assigned["N1"]:
-                row[plage] = f"N1 {assigned['N1']}"
-            elif assigned["N2"]:
-                row[plage] = f"N2 {assigned['N2']}"
-            else:
-                row[plage] = ""
-        week_table_rows.append(row)
+                if assigned["N1"] and assigned["N2"]:
+                    row[plage] = f"N1 {assigned['N1']} | N2 {assigned['N2']}"
+                elif assigned["N1"]:
+                    row[plage] = f"N1 {assigned['N1']}"
+                elif assigned["N2"]:
+                    row[plage] = f"N2 {assigned['N2']}"
+                else:
+                    row[plage] = ""
+            week_table_rows.append(row)
 
-    week_table_df = pd.DataFrame(week_table_rows)
-    st.dataframe(week_table_df, use_container_width=True)
+        week_table_df = pd.DataFrame(week_table_rows)
+        st.dataframe(week_table_df, use_container_width=True)
 
-    if conflicts:
-        st.markdown("### ⚠️ Conflits détectés")
-        df_conflicts = pd.DataFrame(conflicts)
-        st.dataframe(df_conflicts, use_container_width=True)
+        if conflicts:
+            st.markdown("### ⚠️ Conflits détectés")
+            df_conflicts = pd.DataFrame(conflicts)
+            st.dataframe(df_conflicts, use_container_width=True)
+        else:
+            st.success("Aucun conflit détecté pour cette semaine ✅")
+
+        jour_plages = ["07h-09h", "09h-12h", "12h-14h", "15h-18h", "18h-19h"]
+        nuit_plages = ["19h-00h", "00h-07h"]
+
+        fig_jour = plot_hours(all_plannings, jour_plages, "Heures journée (07h-19h)")
+        fig_nuit = plot_hours(all_plannings, nuit_plages, "Heures nuit (19h-07h)")
+        fig_n1 = plot_hours(all_plannings, jour_plages + nuit_plages, "Heures N1 (total)")
+        fig_n2 = plot_hours(all_plannings, jour_plages + nuit_plages, "Heures N2 (total)")
+
+        cols = st.columns(2)
+        with cols[0]:
+            if fig_jour: st.plotly_chart(fig_jour, use_container_width=True)
+            if fig_n1: st.plotly_chart(fig_n1, use_container_width=True)
+        with cols[1]:
+            if fig_nuit: st.plotly_chart(fig_nuit, use_container_width=True)
+            if fig_n2: st.plotly_chart(fig_n2, use_container_width=True)
     else:
-        st.success("Aucun conflit détecté pour cette semaine ✅")
-
-    jour_plages = ["07h-09h", "09h-12h", "12h-14h", "15h-18h", "18h-19h"]
-    nuit_plages = ["19h-00h", "00h-07h"]
-
-    fig_jour = plot_hours(all_plannings, jour_plages, "Heures journée (07h-19h)")
-    fig_nuit = plot_hours(all_plannings, nuit_plages, "Heures nuit (19h-07h)")
-    fig_n1 = plot_hours(all_plannings, jour_plages + nuit_plages, "Heures N1 (total)", filter_role="N1")
-    fig_n2 = plot_hours(all_plannings, jour_plages + nuit_plages, "Heures N2 (total)", filter_role="N2")
-
-    cols = st.columns(2)
-    with cols[0]:
-        if fig_jour: st.plotly_chart(fig_jour, use_container_width=True)
-        if fig_n1: st.plotly_chart(fig_n1, use_container_width=True)
-    with cols[1]:
-        if fig_nuit: st.plotly_chart(fig_nuit, use_container_width=True)
-        if fig_n2: st.plotly_chart(fig_n2, use_container_width=True)
-else:
-    st.info("Aucun planning disponible. Demandez à chaque personne de sauvegarder sa semaine.")
+        st.info("Aucun planning disponible. Demandez à chaque personne de sauvegarder sa semaine.")
