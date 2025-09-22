@@ -5,6 +5,7 @@ import calendar
 import pandas as pd
 import io
 import json
+import os
 
 # Google Drive libs
 from google.oauth2.service_account import Credentials
@@ -48,6 +49,32 @@ def get_or_create_folder(service):
     metadata = {"name": FOLDER_NAME, "mimeType": "application/vnd.google-apps.folder"}
     folder = service.files().create(body=metadata, fields="id").execute()
     return folder.get("id")
+
+# --- Initialisation Google Drive ---
+try:
+    drive = get_drive_service()
+    folder_id = get_or_create_folder(drive)
+
+    # --- Initialisation automatique des fichiers vides ---
+    all_cols = ["Date","Jour","Utilisateur","07h-09h","09h-12h","12h-14h","15h-18h","18h-19h","19h-00h","00h-07h"]
+    std_cols = ["Utilisateur","07h-09h","09h-12h","12h-14h","15h-18h","18h-19h","19h-00h","00h-07h"]
+
+    def init_drive_csv(file_name, columns):
+        local_path = f"data/{file_name}" if "all_plannings" in file_name else f"utils/{file_name}"
+        if not os.path.exists(local_path) or os.stat(local_path).st_size == 0:
+            df = pd.DataFrame(columns=columns)
+            df.to_csv(local_path, index=False)
+            if drive and folder_id:
+                upload_df_to_drive(drive, folder_id, file_name, df)
+
+    init_drive_csv("all_plannings.csv", all_cols)
+    init_drive_csv("standard_planning.csv", std_cols)
+
+except Exception as e:
+    drive = None
+    folder_id = None
+    st.warning(f"Impossible de se connecter à Google Drive: {e}")
+
 
 def upload_df_to_drive(service, folder_id, filename, df):
     buffer = io.BytesIO()
