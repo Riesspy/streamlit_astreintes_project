@@ -101,7 +101,7 @@ planning_type = st.sidebar.radio(
 
 # ---------------- Login ----------------
 st.sidebar.header("Connexion utilisateur")
-current_user = st.sidebar.text_input("Entrez votre nom")
+current_user = st.sidebar.text_input("Entrez votre nom", key="login_user")
 if current_user:
     current_user = current_user.strip()
     st.sidebar.success(f"Connecté en tant que : {current_user}")
