@@ -99,14 +99,7 @@ planning_type = st.sidebar.radio(
     ("Planning personnel", "Planning général")
 )
 
-# ---------------- Login ----------------
-st.sidebar.header("Connexion utilisateur")
-current_user = st.sidebar.text_input("Entrez votre nom", key="login_user")
-if current_user:
-    current_user = current_user.strip()
-    st.sidebar.success(f"Connecté en tant que : {current_user}")
-else:
-    st.sidebar.info("Veuillez entrer votre nom pour accéder au planning.")
+
 
 # ---------------- Choix mois/année ----------------
 mois = [calendar.month_name[i] for i in range(1, 13)]
