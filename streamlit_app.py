@@ -153,17 +153,31 @@ def load_standard(user):
 
 def save_standard_local_and_drive(user, df_user):
     try:
+        # Vérifier si le fichier existe et s'il contient des données
         try:
             df_standard = pd.read_csv(STANDARD_FILE)
-            df_standard = df_standard[df_standard["Utilisateur"] != user]
-        except FileNotFoundError:
+            if df_standard.empty:
+                df_standard = pd.DataFrame(columns=["Utilisateur"] + plages)
+            else:
+                df_standard = df_standard[df_standard["Utilisateur"] != user]
+        except (FileNotFoundError, pd.errors.EmptyDataError):
+            # Si fichier manquant ou vide -> créer DataFrame vide avec colonnes
             df_standard = pd.DataFrame(columns=["Utilisateur"] + plages)
+
+        # Ajouter ou remplacer la ligne de l'utilisateur
         new_row = {"Utilisateur": user}
         new_row.update(df_user.iloc[0][plages].to_dict())
         df_standard = pd.concat([df_standard, pd.DataFrame([new_row])], ignore_index=True)
+
+        # Sauvegarde locale
         df_standard.to_csv(STANDARD_FILE, index=False)
+
+        # Upload sur Drive si configuré
         if drive and folder_id:
             upload_df_to_drive(drive, folder_id, "standard_planning.csv", df_standard)
+
+        st.success("Planning standard mis à jour ✅")
+
     except Exception as e:
         st.error(f"Erreur en sauvegardant le standard: {e}")
 
