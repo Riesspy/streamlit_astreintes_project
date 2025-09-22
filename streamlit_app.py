@@ -205,11 +205,23 @@ week_days = [st.session_state.week_start + datetime.timedelta(days=i) for i in r
 
 # ---------------- Mon Planning ----------------
 if current_user:
+    # Nettoyer le nom de l'utilisateur pour éviter les problèmes d'espaces
+    current_user = current_user.strip()
+
+    # Convertir Date en datetime.date pour correspondre à week_days
+    if not all_plannings.empty and "Date" in all_plannings.columns:
+        all_plannings["Date"] = pd.to_datetime(all_plannings["Date"], errors="coerce").dt.date
+
+    # Nettoyer les noms d'utilisateur dans all_plannings
+    all_plannings["Utilisateur"] = all_plannings["Utilisateur"].astype(str).str.strip()
+
+    # Filtrer les données de la semaine pour l'utilisateur courant
     user_week_df = all_plannings[
         (all_plannings["Utilisateur"] == current_user) &
         (all_plannings["Date"].isin(week_days))
     ] if not all_plannings.empty else pd.DataFrame()
 
+    # Si aucune donnée existante, utiliser le planning standard
     if not user_week_df.empty:
         df = user_week_df.copy()
     else:
@@ -221,17 +233,21 @@ if current_user:
             rows.append(row)
         df = pd.DataFrame(rows)
 
+    # Configurer le data_editor Streamlit
     options = ["N1", "N2", "Backup1", "Backup2", ""]
     column_config = {plage: st.column_config.SelectboxColumn(options=options, label=plage) for plage in plages}
     edited_df = st.data_editor(df, column_config=column_config, num_rows="dynamic")
 
+    # Boutons de sauvegarde
     col1, col2 = st.columns(2)
     with col1:
         if st.button("💾 Sauvegarder la semaine"):
+            # Sauvegarde locale via utils
             save_user_planning(current_user, edited_df)
+            # Mettre à jour all_plannings et upload global file vers Drive
             try:
                 all_plannings = load_all_plannings()
-                if not all_plannings.empty:
+                if not all_plannings.empty and "Date" in all_plannings.columns:
                     all_plannings["Date"] = pd.to_datetime(all_plannings["Date"]).dt.date
                 if drive and folder_id:
                     upload_df_to_drive(drive, folder_id, "all_plannings.csv", all_plannings)
