@@ -269,22 +269,31 @@ if current_user:
 
     # ---------------- Sauvegarder la semaine ----------------
 def save_week(current_user, edited_df):
-    if edited_df.empty or "Date" not in edited_df.columns:
+    if edited_df.empty:
         st.error("Impossible de sauvegarder : le planning est vide.")
         return
 
-    # Normaliser le nom dans le DataFrame
+    # Assurer que toutes les colonnes existent
+    for col in ["Date", "Utilisateur"] + plages:
+        if col not in edited_df.columns:
+            edited_df[col] = ""
+
+    # Normaliser types
     edited_df["Utilisateur"] = current_user
+    if not pd.api.types.is_datetime64_any_dtype(edited_df["Date"]):
+        edited_df["Date"] = pd.to_datetime(edited_df["Date"]).dt.date
 
     try:
-        # Charger tous les plannings existants
+        # Charger les plannings existants
         try:
             all_plannings_local = pd.read_csv("data/all_plannings.csv")
+            if all_plannings_local.empty:
+                all_plannings_local = pd.DataFrame(columns=edited_df.columns)
             all_plannings_local["Date"] = pd.to_datetime(all_plannings_local["Date"]).dt.date
         except (FileNotFoundError, pd.errors.EmptyDataError):
             all_plannings_local = pd.DataFrame(columns=edited_df.columns)
 
-        # Supprimer l'ancien planning de l'utilisateur pour ces dates
+        # Supprimer ancien planning pour l'utilisateur sur ces dates
         mask = (all_plannings_local["Utilisateur"] == current_user) & (all_plannings_local["Date"].isin(edited_df["Date"]))
         all_plannings_local = all_plannings_local[~mask]
 
@@ -303,7 +312,6 @@ def save_week(current_user, edited_df):
     except Exception as e:
         st.error(f"Erreur sauvegarde: {e}")
 
-
 # ---------------- Sauvegarder comme standard ----------------
 
 
@@ -311,9 +319,14 @@ def save_week(current_user, edited_df):
 
 
 def save_standard(current_user, edited_df):
-    if edited_df.empty or "Date" not in edited_df.columns:
+    if edited_df.empty:
         st.error("Impossible de sauvegarder le standard : le planning est vide.")
         return
+
+    # Assurer colonnes
+    for col in ["Utilisateur"] + plages:
+        if col not in edited_df.columns:
+            edited_df[col] = ""
 
     edited_df["Utilisateur"] = current_user
 
@@ -340,7 +353,6 @@ def save_standard(current_user, edited_df):
 
     except Exception as e:
         st.error(f"Erreur en sauvegardant le standard: {e}")
-
 # ---------------- sidebar pour Sauvegarder  ----------------
 col1, col2 = st.columns(2)
 
