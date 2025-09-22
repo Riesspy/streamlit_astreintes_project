@@ -87,10 +87,12 @@ def download_csv_from_drive(service, folder_id, filename):
     
     # ---------------- Sidebar et connexion ----------------
 st.sidebar.header("Connexion utilisateur")
-current_user = st.sidebar.text_input("Entrez votre nom")
+raw_user = st.sidebar.text_input("Entrez votre nom", key="login_user")
+current_user = raw_user.strip().capitalize() if raw_user else None
 if current_user:
-    current_user = current_user.strip()
     st.sidebar.success(f"Connecté en tant que : {current_user}")
+else:
+    st.sidebar.info("Veuillez entrer votre nom pour accéder au planning.")
 
 # Menu planning
 st.sidebar.header("Affichage Planning")
@@ -271,24 +273,28 @@ def save_week(current_user, edited_df):
         st.error("Impossible de sauvegarder : le planning est vide.")
         return
 
-    # 1️⃣ Sauvegarde locale
-    save_user_planning(current_user, edited_df)
+    # Normaliser le nom dans le DataFrame
+    edited_df["Utilisateur"] = current_user
 
-    # 2️⃣ Mettre à jour all_plannings
     try:
-        all_plannings_local = load_all_plannings()
-        if all_plannings_local.empty:
-            all_plannings_local = edited_df.copy()
-        else:
-            # Supprimer l'ancien planning de l'utilisateur pour les mêmes dates
-            mask = (all_plannings_local["Utilisateur"] == current_user) & (all_plannings_local["Date"].isin(edited_df["Date"]))
-            all_plannings_local = all_plannings_local[~mask]
-            all_plannings_local = pd.concat([all_plannings_local, edited_df], ignore_index=True)
+        # Charger tous les plannings existants
+        try:
+            all_plannings_local = pd.read_csv("data/all_plannings.csv")
+            all_plannings_local["Date"] = pd.to_datetime(all_plannings_local["Date"]).dt.date
+        except (FileNotFoundError, pd.errors.EmptyDataError):
+            all_plannings_local = pd.DataFrame(columns=edited_df.columns)
 
-        # 3️⃣ Sauvegarde locale globale
+        # Supprimer l'ancien planning de l'utilisateur pour ces dates
+        mask = (all_plannings_local["Utilisateur"] == current_user) & (all_plannings_local["Date"].isin(edited_df["Date"]))
+        all_plannings_local = all_plannings_local[~mask]
+
+        # Ajouter le nouveau planning
+        all_plannings_local = pd.concat([all_plannings_local, edited_df], ignore_index=True)
+
+        # Sauvegarde locale
         all_plannings_local.to_csv("data/all_plannings.csv", index=False)
 
-        # 4️⃣ Upload sur Drive
+        # Upload Drive
         if drive and folder_id:
             upload_df_to_drive(drive, folder_id, "all_plannings.csv", all_plannings_local)
 
@@ -309,6 +315,8 @@ def save_standard(current_user, edited_df):
         st.error("Impossible de sauvegarder le standard : le planning est vide.")
         return
 
+    edited_df["Utilisateur"] = current_user
+
     try:
         try:
             df_standard = pd.read_csv(STANDARD_FILE)
@@ -323,10 +331,8 @@ def save_standard(current_user, edited_df):
         new_row.update(edited_df.iloc[0][plages].to_dict())
         df_standard = pd.concat([df_standard, pd.DataFrame([new_row])], ignore_index=True)
 
-        # Sauvegarde locale
         df_standard.to_csv(STANDARD_FILE, index=False)
 
-        # Upload Drive
         if drive and folder_id:
             upload_df_to_drive(drive, folder_id, "standard_planning.csv", df_standard)
 
@@ -335,6 +341,7 @@ def save_standard(current_user, edited_df):
     except Exception as e:
         st.error(f"Erreur en sauvegardant le standard: {e}")
 
+# ---------------- sidebar pour Sauvegarder  ----------------
 col1, col2 = st.columns(2)
 
 with col1:
