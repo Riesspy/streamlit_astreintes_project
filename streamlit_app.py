@@ -265,29 +265,71 @@ if current_user:
     column_config = {plage: st.column_config.SelectboxColumn(options=options, label=plage) for plage in plages}
     edited_df = st.data_editor(df, column_config=column_config, num_rows="dynamic")
 
-    # Boutons de sauvegarde
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("💾 Sauvegarder la semaine"):
-            # Sauvegarde locale via utils
-            save_user_planning(current_user, edited_df)
-            # Mettre à jour all_plannings et upload global file vers Drive
-            try:
-                all_plannings = load_all_plannings()
-                if not all_plannings.empty and "Date" in all_plannings.columns:
-                    all_plannings["Date"] = pd.to_datetime(all_plannings["Date"]).dt.date
-                if drive and folder_id:
-                    upload_df_to_drive(drive, folder_id, "all_plannings.csv", all_plannings)
-                st.success("Planning de la semaine sauvegardé ✅")
-            except Exception as e:
-                st.error(f"Erreur sauvegarde: {e}")
-    with col2:
-        if st.button("💾 Sauvegarder comme standard"):
-            try:
-                save_standard_local_and_drive(current_user, edited_df)
-                st.success("Planning standard mis à jour ✅")
-            except Exception as e:
-                st.error(f"Erreur sauvegarde standard: {e}")
+    # ---------------- Sauvegarder la semaine ----------------
+def save_week(current_user, edited_df):
+    if edited_df.empty or "Date" not in edited_df.columns:
+        st.error("Impossible de sauvegarder : le planning est vide.")
+        return
+
+    # 1️⃣ Sauvegarde locale
+    save_user_planning(current_user, edited_df)
+
+    # 2️⃣ Mettre à jour all_plannings
+    try:
+        all_plannings_local = load_all_plannings()
+        if all_plannings_local.empty:
+            all_plannings_local = edited_df.copy()
+        else:
+            # Supprimer l'ancien planning de l'utilisateur pour les mêmes dates
+            mask = (all_plannings_local["Utilisateur"] == current_user) & (all_plannings_local["Date"].isin(edited_df["Date"]))
+            all_plannings_local = all_plannings_local[~mask]
+            all_plannings_local = pd.concat([all_plannings_local, edited_df], ignore_index=True)
+
+        # 3️⃣ Sauvegarde locale globale
+        all_plannings_local.to_csv("data/all_plannings.csv", index=False)
+
+        # 4️⃣ Upload sur Drive
+        if drive and folder_id:
+            upload_df_to_drive(drive, folder_id, "all_plannings.csv", all_plannings_local)
+
+        st.success("Planning de la semaine sauvegardé ✅")
+
+    except Exception as e:
+        st.error(f"Erreur sauvegarde: {e}")
+
+
+# ---------------- Sauvegarder comme standard ----------------
+def save_standard(current_user, edited_df):
+    if edited_df.empty or "Date" not in edited_df.columns:
+        st.error("Impossible de sauvegarder le standard : le planning est vide.")
+        return
+
+    try:
+        try:
+            df_standard = pd.read_csv(STANDARD_FILE)
+            if df_standard.empty:
+                df_standard = pd.DataFrame(columns=["Utilisateur"] + plages)
+            else:
+                df_standard = df_standard[df_standard["Utilisateur"] != current_user]
+        except (FileNotFoundError, pd.errors.EmptyDataError):
+            df_standard = pd.DataFrame(columns=["Utilisateur"] + plages)
+
+        new_row = {"Utilisateur": current_user}
+        new_row.update(edited_df.iloc[0][plages].to_dict())
+        df_standard = pd.concat([df_standard, pd.DataFrame([new_row])], ignore_index=True)
+
+        # Sauvegarde locale
+        df_standard.to_csv(STANDARD_FILE, index=False)
+
+        # Upload Drive
+        if drive and folder_id:
+            upload_df_to_drive(drive, folder_id, "standard_planning.csv", df_standard)
+
+        st.success("Planning standard mis à jour ✅")
+
+    except Exception as e:
+        st.error(f"Erreur en sauvegardant le standard: {e}")
+
 
 # ---------------- Planning final semaine ----------------
 if planning_type == "Planning général":
