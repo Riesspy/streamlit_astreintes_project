@@ -298,33 +298,35 @@ if not all_plannings.empty:
         if plage not in all_plannings.columns:
             all_plannings[plage] = ""
 
-    # Appel sécurisé à plot_hours
+    # Graphique heures journée
     try:
         fig_jour = plot_hours(all_plannings, jour_plages, "Heures journée (07h-19h)")
     except Exception as e:
         st.error(f"Erreur graphique journée: {e}")
         fig_jour = None
 
+    # Graphique heures nuit
     try:
         fig_nuit = plot_hours(all_plannings, nuit_plages, "Heures nuit (19h-07h)")
     except Exception as e:
         st.error(f"Erreur graphique nuit: {e}")
         fig_nuit = None
 
+    # Graphique N1 (toutes plages)
     try:
-        # Si plot_hours supporte filter_role, sinon supprimer ce paramètre
         fig_n1 = plot_hours(all_plannings, jour_plages + nuit_plages, "Heures N1 (total)", filter_role="N1")
     except Exception as e:
-        st.warning(f"Impossible de filtrer N1: {e}. Affichage sans filtre.")
-        fig_n1 = plot_hours(all_plannings, jour_plages + nuit_plages, "Heures N1 (total)")
+        st.error(f"Erreur graphique N1: {e}")
+        fig_n1 = None
 
+    # Graphique N2 (toutes plages)
     try:
         fig_n2 = plot_hours(all_plannings, jour_plages + nuit_plages, "Heures N2 (total)", filter_role="N2")
     except Exception as e:
-        st.warning(f"Impossible de filtrer N2: {e}. Affichage sans filtre.")
-        fig_n2 = plot_hours(all_plannings, jour_plages + nuit_plages, "Heures N2 (total)")
+        st.error(f"Erreur graphique N2: {e}")
+        fig_n2 = None
 
-    # Affichage
+    # Affichage des graphiques
     cols = st.columns(2)
     with cols[0]:
         if fig_jour: st.plotly_chart(fig_jour, use_container_width=True)
