@@ -289,14 +289,42 @@ if not all_plannings.empty:
     else:
         st.success("Aucun conflit détecté pour cette semaine ✅")
 
+        # ---------------- Graphes ----------------
     jour_plages = ["07h-09h", "09h-12h", "12h-14h", "15h-18h", "18h-19h"]
     nuit_plages = ["19h-00h", "00h-07h"]
 
-    fig_jour = plot_hours(all_plannings, jour_plages, "Heures journée (07h-19h)")
-    fig_nuit = plot_hours(all_plannings, nuit_plages, "Heures nuit (19h-07h)")
-    fig_n1 = plot_hours(all_plannings, jour_plages + nuit_plages, "Heures N1 (total)", filter_role="N1")
-    fig_n2 = plot_hours(all_plannings, jour_plages + nuit_plages, "Heures N2 (total)", filter_role="N2")
+    # S'assurer que toutes les colonnes existent dans all_plannings pour éviter les erreurs
+    for plage in jour_plages + nuit_plages:
+        if plage not in all_plannings.columns:
+            all_plannings[plage] = ""
 
+    # Appel sécurisé à plot_hours
+    try:
+        fig_jour = plot_hours(all_plannings, jour_plages, "Heures journée (07h-19h)")
+    except Exception as e:
+        st.error(f"Erreur graphique journée: {e}")
+        fig_jour = None
+
+    try:
+        fig_nuit = plot_hours(all_plannings, nuit_plages, "Heures nuit (19h-07h)")
+    except Exception as e:
+        st.error(f"Erreur graphique nuit: {e}")
+        fig_nuit = None
+
+    try:
+        # Si plot_hours supporte filter_role, sinon supprimer ce paramètre
+        fig_n1 = plot_hours(all_plannings, jour_plages + nuit_plages, "Heures N1 (total)", filter_role="N1")
+    except Exception as e:
+        st.warning(f"Impossible de filtrer N1: {e}. Affichage sans filtre.")
+        fig_n1 = plot_hours(all_plannings, jour_plages + nuit_plages, "Heures N1 (total)")
+
+    try:
+        fig_n2 = plot_hours(all_plannings, jour_plages + nuit_plages, "Heures N2 (total)", filter_role="N2")
+    except Exception as e:
+        st.warning(f"Impossible de filtrer N2: {e}. Affichage sans filtre.")
+        fig_n2 = plot_hours(all_plannings, jour_plages + nuit_plages, "Heures N2 (total)")
+
+    # Affichage
     cols = st.columns(2)
     with cols[0]:
         if fig_jour: st.plotly_chart(fig_jour, use_container_width=True)
@@ -304,5 +332,7 @@ if not all_plannings.empty:
     with cols[1]:
         if fig_nuit: st.plotly_chart(fig_nuit, use_container_width=True)
         if fig_n2: st.plotly_chart(fig_n2, use_container_width=True)
+        
+
 else:
     st.info("Aucun planning disponible. Demandez à chaque personne de sauvegarder sa semaine.")
