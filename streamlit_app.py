@@ -3,63 +3,146 @@ import pandas as pd
 import json
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
+from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
+import io
 
-# --- IMPORTS LOCAUX ---
-from utils.planning import init_dataframe, save_user_planning, load_all_plannings, plages
-
-st.set_page_config(page_title="Planning Astreintes", layout="wide")
-
-# --- GOOGLE DRIVE AUTH ---
-st.subheader("🔑 Connexion Google Drive")
-
-try:
+# ---------------- GOOGLE DRIVE AUTH ----------------
+def connect_drive():
     creds_dict = json.loads(st.secrets["google_drive"]["service_account_json"])
-    creds = Credentials.from_service_account_info(creds_dict, scopes=["https://www.googleapis.com/auth/drive"])
-    drive_service = build("drive", "v3", credentials=creds)
+    creds = Credentials.from_service_account_info(
+        creds_dict, scopes=["https://www.googleapis.com/auth/drive"]
+    )
+    return build("drive", "v3", credentials=creds)
 
-    # Test : Lister les 5 derniers fichiers
-    results = drive_service.files().list(pageSize=5, fields="files(id, name)").execute()
+# ---------------- GOOGLE DRIVE FUNCTIONS ----------------
+FOLDER_NAME = "Astreintes_Planning"
+
+def get_or_create_folder(service):
+    """Get or create a folder on Google Drive for storing plannings."""
+    results = service.files().list(
+        q=f"name='{FOLDER_NAME}' and mimeType='application/vnd.google-apps.folder'",
+        spaces="drive",
+        fields="files(id, name)"
+    ).execute()
+    items = results.get("files", [])
+    if items:
+        return items[0]["id"]
+    file_metadata = {
+        "name": FOLDER_NAME,
+        "mimeType": "application/vnd.google-apps.folder"
+    }
+    folder = service.files().create(body=file_metadata, fields="id").execute()
+    return folder.get("id")
+
+def upload_file(service, folder_id, filename, dataframe):
+    """Upload or update a CSV file to Google Drive."""
+    file_metadata = {"name": filename, "parents": [folder_id]}
+    buffer = io.BytesIO()
+    dataframe.to_csv(buffer, index=False)
+    buffer.seek(0)
+
+    # Check if file already exists
+    results = service.files().list(
+        q=f"name='{filename}' and '{folder_id}' in parents",
+        spaces="drive",
+        fields="files(id, name)"
+    ).execute()
     items = results.get("files", [])
 
-    if not items:
-        st.warning("Aucun fichier trouvé dans Google Drive.")
+    media = MediaIoBaseUpload(buffer, mimetype="text/csv", resumable=True)
+
+    if items:
+        file_id = items[0]["id"]
+        service.files().update(fileId=file_id, media_body=media).execute()
     else:
-        st.success("✅ Connexion réussie à Google Drive")
-        for item in items:
-            st.write(f"- {item['name']} ({item['id']})")
+        service.files().create(body=file_metadata, media_body=media).execute()
 
-except Exception as e:
-    st.error(f"❌ Erreur de connexion Google Drive : {e}")
-    st.stop()
+def download_file(service, folder_id, filename):
+    """Download CSV file from Google Drive."""
+    results = service.files().list(
+        q=f"name='{filename}' and '{folder_id}' in parents",
+        spaces="drive",
+        fields="files(id, name)"
+    ).execute()
+    items = results.get("files", [])
+    if not items:
+        return None
+    file_id = items[0]["id"]
 
-# --- PLANNING ---
+    request = service.files().get_media(fileId=file_id)
+    fh = io.BytesIO()
+    downloader = MediaIoBaseDownload(fh, request)
+    done = False
+    while not done:
+        _, done = downloader.next_chunk()
+    fh.seek(0)
+    return pd.read_csv(fh)
+
+# ---------------- PLANNING FUNCTIONS ----------------
+plages = ["Nuit", "Jour"]
+
+def init_dataframe():
+    return pd.DataFrame(columns=["Nom", "Jour", "Plage", "Rôle"])
+
+def save_user_planning(df, username):
+    service = connect_drive()
+    folder_id = get_or_create_folder(service)
+    upload_file(service, folder_id, f"{username}_planning.csv", df)
+
+def load_user_planning(username):
+    service = connect_drive()
+    folder_id = get_or_create_folder(service)
+    return download_file(service, folder_id, f"{username}_planning.csv")
+
+def load_all_plannings():
+    service = connect_drive()
+    folder_id = get_or_create_folder(service)
+    results = service.files().list(
+        q=f"'{folder_id}' in parents",
+        spaces="drive",
+        fields="files(id, name)"
+    ).execute()
+    files = results.get("files", [])
+    all_plans = []
+    for f in files:
+        if f["name"].endswith("_planning.csv"):
+            df = download_file(service, folder_id, f["name"])
+            if df is not None:
+                all_plans.append(df)
+    if all_plans:
+        return pd.concat(all_plans, ignore_index=True)
+    return init_dataframe()
+
+# ---------------- STREAMLIT APP ----------------
 st.title("📅 Gestion des Astreintes")
 
-# Liste des personnes
-personnes = ["Julie", "Riadh", "Florian", "Nassim"]
+menu = st.sidebar.radio("Menu", ["Mon Planning", "Planning Global"])
 
-# Initialisation du planning général
-planning_general = init_dataframe()
+if menu == "Mon Planning":
+    username = st.text_input("Entrez votre nom :")
+    if username:
+        df_user = load_user_planning(username)
+        if df_user is None:
+            df_user = init_dataframe()
 
-# Sélection utilisateur
-user = st.selectbox("👤 Sélectionnez votre nom", personnes)
+        st.subheader(f"Planning de {username}")
+        with st.form("planning_form"):
+            jour = st.date_input("Jour")
+            plage = st.selectbox("Plage", plages)
+            role = st.selectbox("Rôle", ["N1", "N2"])
+            submitted = st.form_submit_button("Ajouter")
+            if submitted:
+                new_row = pd.DataFrame([{"Nom": username, "Jour": jour, "Plage": plage, "Rôle": role}])
+                df_user = pd.concat([df_user, new_row], ignore_index=True)
+                save_user_planning(df_user, username)
+                st.success("✅ Planning sauvegardé sur Google Drive !")
 
-# Création planning perso
-planning_user = init_dataframe()
+        st.dataframe(df_user)
 
-st.write("### Remplissez vos disponibilités")
-for plage in plages:
-    dispo = st.checkbox(f"{plage} - Disponible ?", key=f"{user}_{plage}")
-    if dispo:
-        planning_user.loc[plage, "N1"] = user
-
-# Sauvegarde
-if st.button("💾 Sauvegarder mon planning"):
-    save_user_planning(user, planning_user)
-    st.success("Planning sauvegardé avec succès ✅")
-
-# Chargement du planning global
-if st.button("📊 Charger le planning global"):
-    planning_general = load_all_plannings()
-    st.write("### Planning global")
-    st.dataframe(planning_general)
+elif menu == "Planning Global":
+    st.subheader("🌍 Vue Globale des Plannings")
+    df_all = load_all_plannings()
+    if not df_all.empty:
+        st.dataframe(df_all)
+    else:
+        st.info("Aucun planning trouvé.")
