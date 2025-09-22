@@ -1,95 +1,94 @@
+# streamlit_app.py
 import streamlit as st
+import datetime
+import calendar
 import pandas as pd
+import io
 import json
+
+# Google Drive libs
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
-import io
 
-import datetime
-import calendar
-
+# Utils locaux (assure-toi que ces fonctions existent dans utils/planning.py et utils/charts.py)
 from utils.auth import load_users, check_user
-from utils.planning import save_user_planning, load_all_plannings, plages
+from utils.planning import init_dataframe, save_user_planning, load_all_plannings, load_standard_planning, plages
 from utils.charts import plot_hours
 
-# ---------------- GOOGLE DRIVE AUTH ----------------
-def connect_drive():
-    creds_dict = json.loads(st.secrets["google_drive"]["service_account_json"])
-    creds = Credentials.from_service_account_info(
-        creds_dict, scopes=["https://www.googleapis.com/auth/drive"]
-    )
-    return build("drive", "v3", credentials=creds)
+st.set_page_config(page_title="Planning Astreintes", layout="wide")
+st.title("📅 Planning des astreintes")
 
-# ---------------- GOOGLE DRIVE FUNCTIONS ----------------
+# ---------------- Google Drive helpers ----------------
+# On lit les champs séparés du secret (Option 2)
+def get_drive_service():
+    creds_dict = {
+        "type": st.secrets["google_drive"]["type"],
+        "project_id": st.secrets["google_drive"]["project_id"],
+        "private_key_id": st.secrets["google_drive"]["private_key_id"],
+        "private_key": st.secrets["google_drive"]["private_key"],
+        "client_email": st.secrets["google_drive"]["client_email"],
+        "client_id": st.secrets["google_drive"]["client_id"],
+        "auth_uri": st.secrets["google_drive"]["auth_uri"],
+        "token_uri": st.secrets["google_drive"]["token_uri"],
+        "auth_provider_x509_cert_url": st.secrets["google_drive"]["auth_provider_x509_cert_url"],
+        "client_x509_cert_url": st.secrets["google_drive"]["client_x509_cert_url"],
+    }
+    creds = Credentials.from_service_account_info(creds_dict, scopes=["https://www.googleapis.com/auth/drive"])
+    service = build("drive", "v3", credentials=creds)
+    return service
+
 FOLDER_NAME = "Astreintes_Planning"
 
 def get_or_create_folder(service):
-    """Get or create a folder on Google Drive for storing plannings."""
-    results = service.files().list(
-        q=f"name='{FOLDER_NAME}' and mimeType='application/vnd.google-apps.folder'",
-        spaces="drive",
-        fields="files(id, name)"
-    ).execute()
-    items = results.get("files", [])
+    q = f"name='{FOLDER_NAME}' and mimeType='application/vnd.google-apps.folder'"
+    res = service.files().list(q=q, spaces="drive", fields="files(id, name)").execute()
+    items = res.get("files", [])
     if items:
         return items[0]["id"]
-    file_metadata = {
-        "name": FOLDER_NAME,
-        "mimeType": "application/vnd.google-apps.folder"
-    }
-    folder = service.files().create(body=file_metadata, fields="id").execute()
+    metadata = {"name": FOLDER_NAME, "mimeType": "application/vnd.google-apps.folder"}
+    folder = service.files().create(body=metadata, fields="id").execute()
     return folder.get("id")
 
-def upload_file(service, folder_id, filename, dataframe):
-    """Upload or update a CSV file to Google Drive."""
-    file_metadata = {"name": filename, "parents": [folder_id]}
+def upload_df_to_drive(service, folder_id, filename, df):
+    """Upload or update a dataframe as CSV to Drive folder."""
     buffer = io.BytesIO()
-    dataframe.to_csv(buffer, index=False)
+    buffer.write(df.to_csv(index=False).encode("utf-8"))
     buffer.seek(0)
-
-    # Check if file already exists
-    results = service.files().list(
-        q=f"name='{filename}' and '{folder_id}' in parents",
-        spaces="drive",
-        fields="files(id, name)"
-    ).execute()
-    items = results.get("files", [])
-
     media = MediaIoBaseUpload(buffer, mimetype="text/csv", resumable=True)
 
+    q = f"name='{filename}' and '{folder_id}' in parents"
+    res = service.files().list(q=q, spaces="drive", fields="files(id, name)").execute()
+    items = res.get("files", [])
     if items:
         file_id = items[0]["id"]
         service.files().update(fileId=file_id, media_body=media).execute()
     else:
-        service.files().create(body=file_metadata, media_body=media).execute()
+        metadata = {"name": filename, "parents": [folder_id]}
+        service.files().create(body=metadata, media_body=media, fields="id").execute()
 
-def download_file(service, folder_id, filename):
-    """Download CSV file from Google Drive."""
-    results = service.files().list(
-        q=f"name='{filename}' and '{folder_id}' in parents",
-        spaces="drive",
-        fields="files(id, name)"
-    ).execute()
-    items = results.get("files", [])
+def download_csv_from_drive(service, folder_id, filename):
+    """Return pandas DataFrame or None if not found."""
+    q = f"name='{filename}' and '{folder_id}' in parents"
+    res = service.files().list(q=q, spaces="drive", fields="files(id, name)").execute()
+    items = res.get("files", [])
     if not items:
         return None
     file_id = items[0]["id"]
-
-    request = service.files().get_media(fileId=file_id)
+    req = service.files().get_media(fileId=file_id)
     fh = io.BytesIO()
-    downloader = MediaIoBaseDownload(fh, request)
+    downloader = MediaIoBaseDownload(fh, req)
     done = False
     while not done:
         _, done = downloader.next_chunk()
     fh.seek(0)
-    return pd.read_csv(fh)
+    try:
+        df = pd.read_csv(fh)
+        return df
+    except Exception:
+        return None
 
-# ---------------- PLANNING FUNCTIONS ----------------
-st.set_page_config(page_title="Planning Astreintes", layout="wide")
-st.title("📅 Planning des astreintes")
-
-# --- Login ---
+# ---------------- Login ----------------
 users = load_users()
 user_code = st.text_input("Entrez votre code personnel :", type="password")
 current_user = check_user(user_code, users)
@@ -99,24 +98,43 @@ if current_user:
 else:
     st.warning("Veuillez entrer votre code pour vous connecter.")
 
-# --- Sélection du mois et année ---
+# ---------------- Choix mois/année ----------------
 mois = [calendar.month_name[i] for i in range(1, 13)]
-month_name = st.selectbox("Sélectionner le mois :", mois, index=datetime.datetime.now().month-1)
+month_name = st.selectbox("Sélectionner le mois :", mois, index=datetime.datetime.now().month - 1)
 month = mois.index(month_name) + 1
 year = st.number_input("Année :", value=datetime.datetime.now().year, min_value=2020, max_value=2030)
 
-# --- Jours du mois ---
+# ---------------- Jours du mois ----------------
 first_day = datetime.date(year, month, 1)
 last_day = calendar.monthrange(year, month)[1]
 month_days = [first_day + datetime.timedelta(days=i) for i in range(last_day)]
 
-# --- Charger tous les plannings existants ---
+# ---------------- Charger plannings existants (local) ----------------
+# on tente d'abord de synchroniser depuis Drive : all_plannings.csv et standard_planning.csv
+try:
+    drive = get_drive_service()
+    folder_id = get_or_create_folder(drive)
+    df_all_drive = download_csv_from_drive(drive, folder_id, "all_plannings.csv")
+    df_std_drive = download_csv_from_drive(drive, folder_id, "standard_planning.csv")
+    # si on a des versions Drive -> sauvegarder localement via utils (optionnel)
+    if df_all_drive is not None:
+        # écrire temporairement dans data/all_plannings.csv pour utils.load_all_plannings si besoin
+        df_all_drive.to_csv("data/all_plannings.csv", index=False)
+    if df_std_drive is not None:
+        df_std_drive.to_csv("utils/standard_planning.csv", index=False)
+except Exception as e:
+    # si problème Drive, on continue en local
+    drive = None
+    folder_id = None
+
 all_plannings = load_all_plannings()
 if not all_plannings.empty:
-    all_plannings["Date"] = pd.to_datetime(all_plannings["Date"]).dt.date
-    all_plannings["Jour"] = all_plannings["Date"].apply(lambda d: d.strftime("%A"))
+    # normaliser types/colonnes
+    if "Date" in all_plannings.columns:
+        all_plannings["Date"] = pd.to_datetime(all_plannings["Date"]).dt.date
+        all_plannings["Jour"] = all_plannings["Date"].apply(lambda d: d.strftime("%A"))
 
-# --- Standard planning ---
+# ---------------- Standard helpers ----------------
 STANDARD_FILE = "utils/standard_planning.csv"
 
 def load_standard(user):
@@ -126,54 +144,69 @@ def load_standard(user):
         if not user_df.empty:
             return user_df.iloc[0][plages].to_dict()
     except FileNotFoundError:
-        st.warning("Fichier de planning standard non trouvé.")
+        pass
     return {plage: "" for plage in plages}
 
-def save_standard(user, df_user):
-    import os
-    if not os.path.exists(STANDARD_FILE):
-        df_standard = pd.DataFrame(columns=["Utilisateur"] + plages)
-    else:
-        df_standard = pd.read_csv(STANDARD_FILE)
-        df_standard = df_standard[df_standard["Utilisateur"] != user]
-    new_row = {"Utilisateur": user}
-    new_row.update(df_user.iloc[0][plages].to_dict())
-    df_standard = pd.concat([df_standard, pd.DataFrame([new_row])], ignore_index=True)
-    df_standard.to_csv(STANDARD_FILE, index=False)
+def save_standard_local_and_drive(user, df_user):
+    # sauvegarde locale standard (utils file expected location)
+    try:
+        # read existing
+        try:
+            df_standard = pd.read_csv(STANDARD_FILE)
+            df_standard = df_standard[df_standard["Utilisateur"] != user]
+        except FileNotFoundError:
+            df_standard = pd.DataFrame(columns=["Utilisateur"] + plages)
+        new_row = {"Utilisateur": user}
+        new_row.update(df_user.iloc[0][plages].to_dict())
+        df_standard = pd.concat([df_standard, pd.DataFrame([new_row])], ignore_index=True)
+        df_standard.to_csv(STANDARD_FILE, index=False)
+        # upload to drive as well
+        if drive and folder_id:
+            upload_df_to_drive(drive, folder_id, "standard_planning.csv", df_standard)
+    except Exception as e:
+        st.error(f"Erreur en sauvegardant le standard: {e}")
 
-# --- Calcul heures cumulées ---
+# ---------------- Heures / attribution ----------------
 def compute_user_hours(all_df):
     user_hours = {}
-    jour_plages = ["07h-09h","09h-12h","12h-14h","15h-18h","18h-19h"]
-    nuit_plages = ["19h-00h","00h-07h"]
+    jour_plages = ["07h-09h", "09h-12h", "12h-14h", "15h-18h", "18h-19h"]
+    nuit_plages = ["19h-00h", "00h-07h"]
+    if all_df.empty:
+        return {u: {"jour": 0, "nuit": 0} for u in users.values()}
     for user in all_df["Utilisateur"].unique():
         df_user = all_df[all_df["Utilisateur"] == user]
-        day_hours = df_user[jour_plages].applymap(lambda x: 1 if x in ["N1","N2","Backup1","Backup2"] else 0).sum().sum()
-        night_hours = df_user[nuit_plages].applymap(lambda x: 1 if x in ["N1","N2","Backup1","Backup2"] else 0).sum().sum()
-        user_hours[user] = {"jour": day_hours, "nuit": night_hours}
+        day_hours = 0
+        night_hours = 0
+        for p in jour_plages:
+            if p in df_user.columns:
+                day_hours += df_user[p].isin(["N1", "N2", "Backup1", "Backup2"]).sum()
+        for p in nuit_plages:
+            if p in df_user.columns:
+                night_hours += df_user[p].isin(["N1", "N2", "Backup1", "Backup2"]).sum()
+        user_hours[user] = {"jour": int(day_hours), "nuit": int(night_hours)}
     return user_hours
 
-# --- Attribution équilibrée N1/N2 ---
 def assign_plage_final(day_df, plage, user_hours, is_night=False):
     result = {"N1": "", "N2": ""}
+    # pick N1 then N2 balancing by hours
     for priority in ["N1", "N2"]:
         users_priority = day_df[day_df[plage] == priority]
         if not users_priority.empty:
             if is_night:
-                users_priority = users_priority.assign(total_hours=users_priority["Utilisateur"].map(lambda u: user_hours[u]["nuit"]))
+                users_priority = users_priority.assign(total_hours=users_priority["Utilisateur"].map(lambda u: user_hours.get(u, {"nuit":0})["nuit"]))
             else:
-                users_priority = users_priority.assign(total_hours=users_priority["Utilisateur"].map(lambda u: user_hours[u]["jour"]))
+                users_priority = users_priority.assign(total_hours=users_priority["Utilisateur"].map(lambda u: user_hours.get(u, {"jour":0})["jour"]))
             selected_user = users_priority.sort_values("total_hours").iloc[0]["Utilisateur"]
             result[priority] = selected_user
     return result
 
-# --- Semaine actuelle ---
+# ---------------- Semaine (navigation) ----------------
 if "week_start" not in st.session_state:
     today = datetime.date.today()
     week_start = today - datetime.timedelta(days=today.weekday())
     st.session_state.week_start = week_start
 
-col1, col2, col3 = st.columns([1,2,1])
+col1, col2, col3 = st.columns([1, 2, 1])
 with col1:
     if st.button("⬅️ Semaine précédente"):
         st.session_state.week_start -= datetime.timedelta(days=7)
@@ -185,12 +218,13 @@ st.subheader(f"Semaine du {st.session_state.week_start.strftime('%d/%m/%Y')}")
 week_days = [st.session_state.week_start + datetime.timedelta(days=i) for i in range(7)
              if (st.session_state.week_start + datetime.timedelta(days=i)).month == month]
 
-# --- Tableau utilisateur ---
+# ---------------- Mon Planning (interface utilisateur) ----------------
 if current_user:
     user_week_df = all_plannings[
         (all_plannings["Utilisateur"] == current_user) &
         (all_plannings["Date"].isin(week_days))
-    ]
+    ] if not all_plannings.empty else pd.DataFrame()
+
     if not user_week_df.empty:
         df = user_week_df.copy()
     else:
@@ -209,26 +243,51 @@ if current_user:
     col1, col2 = st.columns(2)
     with col1:
         if st.button("💾 Sauvegarder la semaine"):
+            # sauvegarde locale via utils
             save_user_planning(current_user, edited_df)
-            st.success("Planning de la semaine sauvegardé ✅")
+            # mettre à jour all_plannings variable et upload global file to drive
+            try:
+                # reload all local plannings
+                all_plannings = load_all_plannings()
+                if not all_plannings.empty:
+                    all_plannings["Date"] = pd.to_datetime(all_plannings["Date"]).dt.date
+                # upload all_plannings to drive
+                if drive and folder_id:
+                    upload_df_to_drive(drive, folder_id, "all_plannings.csv", all_plannings)
+                st.success("Planning de la semaine sauvegardé ✅")
+            except Exception as e:
+                st.error(f"Erreur sauvegarde: {e}")
     with col2:
         if st.button("💾 Sauvegarder comme standard"):
-            save_standard(current_user, edited_df)
-            st.success("Planning standard mis à jour ✅")
+            try:
+                save_standard_local_and_drive(current_user, edited_df)
+                st.success("Planning standard mis à jour ✅")
+            except Exception as e:
+                st.error(f"Erreur sauvegarde standard: {e}")
 
-# --- Planning final semaine (N1 et N2 affichés) ---
+# ---------------- Planning final semaine (global) ----------------
 st.header("📌 Planning final de la semaine")
 if not all_plannings.empty:
     user_hours = compute_user_hours(all_plannings)
     week_table_rows = []
+    conflicts = []  # collect conflicts entries
+
     week_df = all_plannings[all_plannings["Date"].isin(week_days)].copy()
 
     for day in week_days:
-        row = {"Date": day, "Jour": day.strftime("%A")}
+        row = {"Date": day.strftime("%Y-%m-%d"), "Jour": day.strftime("%A")}
         day_df = week_df[week_df["Date"] == day]
         for plage in plages:
             is_night = plage in ["19h-00h", "00h-07h"]
             assigned = assign_plage_final(day_df, plage, user_hours, is_night=is_night)
+            # Detect conflicts: if multiple people marked same priority in day_df for that plage
+            n1_list = day_df[day_df[plage] == "N1"]["Utilisateur"].tolist()
+            n2_list = day_df[day_df[plage] == "N2"]["Utilisateur"].tolist()
+            if len(n1_list) > 1:
+                conflicts.append({"Date": day.strftime("%Y-%m-%d"), "Plage": plage, "Role": "N1", "Users": ", ".join(n1_list)})
+            if len(n2_list) > 1:
+                conflicts.append({"Date": day.strftime("%Y-%m-%d"), "Plage": plage, "Role": "N2", "Users": ", ".join(n2_list)})
+
             if assigned["N1"] and assigned["N2"]:
                 row[plage] = f"N1 {assigned['N1']} | N2 {assigned['N2']}"
             elif assigned["N1"]:
@@ -240,18 +299,31 @@ if not all_plannings.empty:
         week_table_rows.append(row)
 
     week_table_df = pd.DataFrame(week_table_rows)
-    st.dataframe(week_table_df)
+    st.dataframe(week_table_df, use_container_width=True)
 
-    # --- Graphiques ---
-    jour_plages = ["07h-09h","09h-12h","12h-14h","15h-18h","18h-19h"]
-    nuit_plages = ["19h-00h","00h-07h"]
+    # --- afficher conflits distinctement ---
+    if conflicts:
+        st.markdown("### ⚠️ Conflits détectés")
+        df_conflicts = pd.DataFrame(conflicts)
+        st.dataframe(df_conflicts, use_container_width=True)
+    else:
+        st.success("Aucun conflit détecté pour cette semaine ✅")
+
+    # --- Graphes ---
+    jour_plages = ["07h-09h", "09h-12h", "12h-14h", "15h-18h", "18h-19h"]
+    nuit_plages = ["19h-00h", "00h-07h"]
 
     fig_jour = plot_hours(all_plannings, jour_plages, "Heures journée (07h-19h)")
     fig_nuit = plot_hours(all_plannings, nuit_plages, "Heures nuit (19h-07h)")
+    fig_n1 = plot_hours(all_plannings, jour_plages + nuit_plages, "Heures N1 (total)", filter_role="N1")
+    fig_n2 = plot_hours(all_plannings, jour_plages + nuit_plages, "Heures N2 (total)", filter_role="N2")
 
-    col1, col2 = st.columns(2)
-    with col1:
+    cols = st.columns(2)
+    with cols[0]:
         if fig_jour: st.plotly_chart(fig_jour, use_container_width=True)
-    with col2:
+        if fig_n1: st.plotly_chart(fig_n1, use_container_width=True)
+    with cols[1]:
         if fig_nuit: st.plotly_chart(fig_nuit, use_container_width=True)
-
+        if fig_n2: st.plotly_chart(fig_n2, use_container_width=True)
+else:
+    st.info("Aucun planning disponible. Demandez à chaque personne de sauvegarder sa semaine.")
