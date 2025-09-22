@@ -121,8 +121,10 @@ except Exception as e:
 
 all_plannings = load_all_plannings()
 if not all_plannings.empty and "Date" in all_plannings.columns:
-    all_plannings["Date"] = pd.to_datetime(all_plannings["Date"]).dt.date
-    all_plannings["Jour"] = all_plannings["Date"].apply(lambda d: d.strftime("%A"))
+    # convert to datetime safely
+    all_plannings["Date"] = pd.to_datetime(all_plannings["Date"], errors="coerce").dt.date
+    # créer la colonne Jour en évitant les NaT
+    all_plannings["Jour"] = all_plannings["Date"].apply(lambda d: d.strftime("%A") if pd.notnull(d) else "")
 
 STANDARD_FILE = "utils/standard_planning.csv"
 
